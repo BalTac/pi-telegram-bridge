@@ -1,0 +1,58 @@
+{
+  "name": "pi-telegram-bridge",
+  "version": "1.4.1-baltac.1",
+  "description": "Telegram bridge for pi: voice notes with configurable speech-to-text, Markdown replies, origin prefix. Fork of @bytesbrains/pi-telegram-bridge 1.4.1.",
+  "license": "MIT",
+  "author": "BalTac",
+  "contributors": [
+    "bytesbrains (original pi-telegram-bridge 1.4.1)"
+  ],
+  "private": true,
+  "keywords": [
+    "pi",
+    "pi-coding-agent",
+    "telegram",
+    "bridge",
+    "voice",
+    "whisper",
+    "stt",
+    "mcp"
+  ],
+  "main": "./src/index.ts",
+  "files": [
+    "src/",
+    "skills/",
+    "README.md",
+    "AGENTS.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BalTac/pi-telegram-bridge.git"
+  },
+  "homepage": "https://github.com/BalTac/pi-telegram-bridge#readme",
+  "engines": {
+    "node": ">=18"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^25.8.0",
+    "typescript": "^6.0.3",
+    "vitest": "^2.1.9"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  }
+}
