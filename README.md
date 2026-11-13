@@ -149,6 +149,13 @@ file with `PI_TELEGRAM_ENV_FILE=/path/to/telegram-bridge.env`: `/deliver` rewrit
 `PI_TELEGRAM_DELIVER_AS` line there. `/status` shows the active mode too. Anything that is not the busy error is rethrown, so a
 real failure is still visible.
 
+## Slash-command menu
+
+On session start the bridge publishes its own command list with `setMyCommands`, so Telegram
+autocompletes the commands that actually exist (`/deliver`, `/help`, `/status`, `/stop`, …) instead of
+a stale menu left by another bot sharing the token. One call, once per session; disable with
+`PI_TELEGRAM_SYNC_MENU=0`. `/commands` is accepted as an alias of `/help`.
+
 ## Tools exposed to the agent
 
 `telegram_listen` · `telegram_send` · `telegram_ask` (blocking, with option buttons) ·

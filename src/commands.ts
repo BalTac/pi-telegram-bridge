@@ -134,7 +134,7 @@ const COMMANDS: CommandDef[] = [
 	},
 	{
 		name: "/help",
-		aliases: ["/h"],
+		aliases: ["/h", "/commands"],
 		type: "bridge",
 		description: "Show available commands",
 		ack: "📖 Sending command list...",
@@ -151,6 +151,23 @@ const COMMANDS: CommandDef[] = [
 // ── Lookup ──────────────────────────────────────────────────────────
 
 /** Case-insensitive, aliases included. Returns the canonical CommandDef. */
+/**
+ * Bot command menu for Telegram (setMyCommands), derived from COMMANDS.
+ *
+ * Telegram rules: 1-32 characters, lowercase, no leading slash, description up to 256.
+ * Names that do not fit are skipped instead of breaking the whole call.
+ */
+export function commandMenu(): { command: string; description: string }[] {
+	const menu: { command: string; description: string }[] = [];
+	for (const cmd of COMMANDS) {
+		const command = cmd.name.replace(/^\//, "").toLowerCase();
+		if (command.length < 1 || command.length > 32) continue;
+		const aliases = cmd.aliases.length ? ` (${cmd.aliases.join(" ")})` : "";
+		menu.push({ command, description: `${cmd.description}${aliases}`.slice(0, 256) });
+	}
+	return menu;
+}
+
 function findCommand(input: string): CommandDef | null {
 	const normalized = input.trim().toLowerCase();
 	// Exact match on name or any alias

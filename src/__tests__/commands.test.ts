@@ -60,7 +60,7 @@ describe("isPossibleCommand", () => {
 
 describe("handleCommand — bridge commands", () => {
 	it("handles /help and /status as bridge commands", async () => {
-		for (const cmd of ["/help", "/h", "/status", "/st", "/HELP", "/Status"]) {
+		for (const cmd of ["/help", "/h", "/commands", "/status", "/st", "/HELP", "/Status", "/deliver"]) {
 			const pi = mockPi();
 			const result = await handleCommand(cmd, pi as any, false);
 			expect(result.handled).toBe(true);

@@ -32,7 +32,7 @@ import {
 	notifySchema,
 	sendPhotoSchema,
 } from "./tools/telegram";
-import { handleCommand, isPossibleCommand } from "./commands";
+import { commandMenu, handleCommand, isPossibleCommand } from "./commands";
 import { transcribe } from "./stt";
 import { forwardToAgent } from "./forward";
 
@@ -56,6 +56,15 @@ export default function telegramBridge(pi: ExtensionAPI) {
 			if (entry.type === "custom" && entry.customType === "tg-last-update") {
 				lastUpdateId = (entry.data as { update_id: number }).update_id;
 			}
+		}
+		// Publish the slash-command menu for this bot, so Telegram autocompletes
+		// the commands the bridge actually implements. Disable with PI_TELEGRAM_SYNC_MENU=0.
+		if (process.env.PI_TELEGRAM_SYNC_MENU !== "0") {
+			telegramApi("setMyCommands", { commands: commandMenu() })
+				.then(() => console.log(`[telegram] command menu synced (${commandMenu().length})`))
+				.catch((e: unknown) =>
+					console.warn(`[telegram] command menu sync failed: ${e instanceof Error ? e.message : e}`),
+				);
 		}
 		// Start background listener
 		startListener();
