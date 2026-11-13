@@ -20,6 +20,7 @@ speech-to-text layer. MIT, original copyright preserved in `LICENSE`.
 | language/model | — | configured by env, no rebuild |
 | replies from the `telegram_send` tool | sent as plain text | sent with Telegram Markdown parse |
 | forwarded message prefix | none | configurable, default `[telegram]` (lets the agent tell who is talking) |
+| message while the agent is busy | rejected: `Agent is already processing` | queued as `followUp` (or `steer`), nothing is lost |
 | STT failure | — | never blocks the pipeline: the file path still reaches the agent |
 
 Everything else (polling, `telegram_ask` callback buttons, photo download, `/` commands, offset
@@ -128,6 +129,20 @@ sending the audio out.
 
 You can mix them: `PI_TELEGRAM_STT_CHAIN=http,cmd,agent` tries the local server, falls back to a CLI,
 and finally hands the path over. `off` disables transcription entirely.
+
+## When the agent is already busy
+
+pi rejects `sendUserMessage()` while a run is in progress. The bridge does not drop the message:
+`src/forward.ts` retries it with `deliverAs`, so it is queued instead of lost.
+
+```
+PI_TELEGRAM_DELIVER_AS=followUp   # default: runs right after the current turn
+PI_TELEGRAM_DELIVER_AS=steer      # injects into the running turn, interrupts what it is doing
+```
+
+Use `steer` when the message changes what the agent should do *now* ("stop, wrong file"); leave
+`followUp` when it is an ordinary new request. Anything that is not the busy error is rethrown, so a
+real failure is still visible.
 
 ## Tools exposed to the agent
 

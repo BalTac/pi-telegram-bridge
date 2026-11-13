@@ -34,6 +34,7 @@ import {
 } from "./tools/telegram";
 import { handleCommand, isPossibleCommand } from "./commands";
 import { transcribe } from "./stt";
+import { forwardToAgent } from "./forward";
 
 /** Prepended to forwarded user messages so the agent knows who is talking. */
 const ORIGIN_PREFIX = () => process.env.PI_TELEGRAM_ORIGIN_PREFIX ?? "[telegram]";
@@ -102,7 +103,7 @@ export default function telegramBridge(pi: ExtensionAPI) {
 					// Unknown command — fall through to forward as regular message
 				}
 				// ponytail: un prefisso, niente API. Unico modo per far sapere all'agente l'origine.
-				pi.sendUserMessage(`${ORIGIN_PREFIX()} ${text}`);
+				await forwardToAgent(pi, `${ORIGIN_PREFIX()} ${text}`);
 				await sendMsg(
 					`👂 Got it! Working on: _${text.slice(0, 100)}_`,
 					undefined,
@@ -117,12 +118,14 @@ export default function telegramBridge(pi: ExtensionAPI) {
 				const result = await downloadFile(photoId, destPath);
 				if (result) {
 					const captionText = caption ? `\n\n📝 Caption: ${caption}` : "";
-					pi.sendUserMessage(
+					await forwardToAgent(
+						pi,
 						`📸 Photo received from Telegram\nPath: ${result}${captionText}\n\nUse read("${result}") to view the image.`,
 					);
 					await sendMsg("📸 Photo received! Processing...");
 				} else {
-					pi.sendUserMessage(
+					await forwardToAgent(
+						pi,
 						"📸 Photo received from Telegram but could not be downloaded.",
 					);
 					await sendMsg(
@@ -137,7 +140,7 @@ export default function telegramBridge(pi: ExtensionAPI) {
 				const destPath = path.join(photoDir, `voice_${timestamp}.ogg`);
 				const result = await downloadFile(fileId, destPath);
 				if (!result) {
-					pi.sendUserMessage("🎙️ Voice received but could not be downloaded.");
+					await forwardToAgent(pi, "🎙️ Voice received but could not be downloaded.");
 					return;
 				}
 				const stt = await transcribe(result);
@@ -145,7 +148,7 @@ export default function telegramBridge(pi: ExtensionAPI) {
 				const body = stt.text
 					? `🎙️ Voice from Telegram (${seconds}s, transcript via ${stt.provider})\nTranscript: ${stt.text}\nPath: ${result}`
 					: `🎙️ Voice from Telegram (${seconds}s)\nPath: ${result}\n(no transcript: ${stt.error ?? "STT not configured"}. Transcribe the file yourself if you need the words.)`;
-				pi.sendUserMessage(`${ORIGIN_PREFIX()} ${body}`);
+				await forwardToAgent(pi, `${ORIGIN_PREFIX()} ${body}`);
 				await sendMsg(
 					stt.text
 						? `🎙️ Heard: _${stt.text.slice(0, 120)}_`

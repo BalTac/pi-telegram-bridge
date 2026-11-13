@@ -1,6 +1,6 @@
 {
   "name": "pi-telegram-bridge",
-  "version": "1.4.1-baltac.1",
+  "version": "1.4.1-baltac.2",
   "description": "Telegram bridge for pi: voice notes with configurable speech-to-text, Markdown replies, origin prefix. Fork of @bytesbrains/pi-telegram-bridge 1.4.1.",
   "license": "MIT",
   "author": "BalTac",

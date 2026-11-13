@@ -11,6 +11,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { sendMsg, getChatId } from "./helpers";
 import * as cp from "node:child_process";
 import * as util from "node:util";
+import { forwardToAgent } from "./forward";
 const execAsync = util.promisify(cp.exec);
 
 // ── Command Definitions ─────────────────────────────────────────────
@@ -264,7 +265,7 @@ export async function handleCommand(
 
 	// Agent-directed: inject structured instruction
 	if (cmd.inject) {
-		pi.sendUserMessage(cmd.inject);
+		await forwardToAgent(pi, cmd.inject);
 	}
 	return { handled: true, type: "agent" };
 }
