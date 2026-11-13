@@ -1,16 +1,19 @@
 /**
  * Forwarding a Telegram message into the pi session, even while the agent works.
  *
- * `pi.sendUserMessage()` fails with "Agent is already processing. Specify
- * streamingBehavior ('steer' or 'followUp')" when a run is in progress. The
- * message is not lost silently: it is rejected, and the caller has to pick a
- * delivery mode. This wrapper does it for every entry point (text, photo,
- * voice, slash commands):
+ * In pi 1.5.x `sendUserMessage()` returns `void`: it is fire-and-forget, and a
+ * failure surfaces as `Extension "<runtime>" error: Agent is already processing`
+ * instead of a rejected promise. So catching the error is not enough — we have to
+ * know *before* sending whether the agent is busy, and pass the delivery mode.
  *
- *   - idle        → plain send, the message starts a run immediately
- *   - busy        → retry with `deliverAs`, so the message is queued:
- *       followUp (default) → runs right after the current turn, nothing is interrupted
- *       steer              → injected into the running turn (PI_TELEGRAM_DELIVER_AS=steer)
+ * `setIdleProbe()` is wired once from `session_start` (the context exposes
+ * `isIdle()`). When the probe says the agent is busy, the message is sent with
+ * `deliverAs` straight away:
+ *
+ *   followUp (default) → queued, runs right after the current turn
+ *   steer              → injected into the running turn (PI_TELEGRAM_DELIVER_AS=steer)
+ *
+ * Versions that do return a promise are still handled by the try/catch fallback.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -28,14 +31,30 @@ export function setDeliverMode(mode: DeliverAs, env: NodeJS.ProcessEnv = process
 	env.PI_TELEGRAM_DELIVER_AS = mode;
 }
 
+let idleProbe: (() => boolean) | null = null;
+
+/** Register the "is the agent idle?" probe, taken from an ExtensionContext. */
+export function setIdleProbe(probe: (() => boolean) | null): void {
+	idleProbe = probe;
+}
+
+/** True when we know the agent is processing. Unknown counts as idle. */
+function agentIsBusy(): boolean {
+	try {
+		return idleProbe ? !idleProbe() : false;
+	} catch {
+		return false;
+	}
+}
+
 const BUSY_ERROR = /already processing|streamingBehavior/i;
 
 type Messenger = Pick<ExtensionAPI, "sendUserMessage">;
 
 /**
  * Send a user message into the session. Returns "sent" when it started a run,
- * "queued" when the agent was busy and the message was delivered as
- * steer/followUp. Any other error is rethrown: this wrapper absorbs exactly one
+ * "queued" when the agent was busy and the message was delivered as steer or
+ * followUp. Any other error is rethrown: this wrapper absorbs exactly one
  * failure mode, the one caused by concurrency.
  */
 export async function forwardToAgent(
@@ -43,6 +62,11 @@ export async function forwardToAgent(
 	text: string,
 	env: NodeJS.ProcessEnv = process.env,
 ): Promise<"sent" | "queued"> {
+	if (agentIsBusy()) {
+		const mode = deliverMode(env);
+		await pi.sendUserMessage(text, { deliverAs: mode });
+		return "queued";
+	}
 	try {
 		await pi.sendUserMessage(text);
 		return "sent";

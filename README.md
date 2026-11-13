@@ -132,8 +132,11 @@ and finally hands the path over. `off` disables transcription entirely.
 
 ## When the agent is already busy
 
-pi rejects `sendUserMessage()` while a run is in progress. The bridge does not drop the message:
-`src/forward.ts` retries it with `deliverAs`, so it is queued instead of lost.
+pi's `sendUserMessage()` returns `void`: it is fire-and-forget, and a busy agent produces
+`Extension "<runtime>" error: Agent is already processing` with no promise to catch. The bridge
+therefore asks the session first: the `isIdle()` probe is registered at session start, so when the
+agent is working the message is sent with `deliverAs` in the first place. Older pi versions that do
+return a promise are still handled by the catch/retry path.
 
 ```
 PI_TELEGRAM_DELIVER_AS=followUp   # default: runs right after the current turn

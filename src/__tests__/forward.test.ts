@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { deliverMode, forwardToAgent } from "../forward";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { deliverMode, forwardToAgent, setIdleProbe } from "../forward";
 
 const busy = () =>
 	new Error(
@@ -18,6 +18,8 @@ describe("deliverMode", () => {
 });
 
 describe("forwardToAgent", () => {
+	afterEach(() => setIdleProbe(null));
+
 	it("sends plainly when the agent is idle", async () => {
 		const sendUserMessage = vi.fn(async () => {});
 		const result = await forwardToAgent({ sendUserMessage } as never, "ciao", {} as NodeJS.ProcessEnv);
@@ -53,5 +55,40 @@ describe("forwardToAgent", () => {
 		await expect(
 			forwardToAgent({ sendUserMessage } as never, "ciao", {} as NodeJS.ProcessEnv),
 		).rejects.toThrow("network down");
+	});
+
+	it("does not even try a plain send when the probe says the agent is busy", async () => {
+		setIdleProbe(() => false);
+		const sendUserMessage = vi.fn();
+		const result = await forwardToAgent({ sendUserMessage } as never, "ciao", {} as NodeJS.ProcessEnv);
+		expect(result).toBe("queued");
+		expect(sendUserMessage).toHaveBeenCalledTimes(1);
+		expect(sendUserMessage).toHaveBeenCalledWith("ciao", { deliverAs: "followUp" });
+	});
+
+	it("uses steer from the probe path when configured", async () => {
+		setIdleProbe(() => false);
+		const sendUserMessage = vi.fn();
+		await forwardToAgent({ sendUserMessage } as never, "urgente", {
+			PI_TELEGRAM_DELIVER_AS: "steer",
+		} as NodeJS.ProcessEnv);
+		expect(sendUserMessage).toHaveBeenCalledWith("urgente", { deliverAs: "steer" });
+	});
+
+	it("sends plainly when the probe says the agent is idle", async () => {
+		setIdleProbe(() => true);
+		const sendUserMessage = vi.fn(async () => {});
+		const result = await forwardToAgent({ sendUserMessage } as never, "ciao", {} as NodeJS.ProcessEnv);
+		expect(result).toBe("sent");
+		expect(sendUserMessage).toHaveBeenCalledWith("ciao");
+	});
+
+	it("survives a probe that throws", async () => {
+		setIdleProbe(() => {
+			throw new Error("no ctx");
+		});
+		const sendUserMessage = vi.fn(async () => {});
+		const result = await forwardToAgent({ sendUserMessage } as never, "ciao", {} as NodeJS.ProcessEnv);
+		expect(result).toBe("sent");
 	});
 });

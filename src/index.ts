@@ -34,7 +34,7 @@ import {
 } from "./tools/telegram";
 import { commandMenu, handleCommand, isPossibleCommand } from "./commands";
 import { transcribe } from "./stt";
-import { forwardToAgent } from "./forward";
+import { forwardToAgent, setIdleProbe } from "./forward";
 
 /** Prepended to forwarded user messages so the agent knows who is talking. */
 const ORIGIN_PREFIX = () => process.env.PI_TELEGRAM_ORIGIN_PREFIX ?? "[telegram]";
@@ -47,6 +47,9 @@ export default function telegramBridge(pi: ExtensionAPI) {
 	// ── Session lifecycle ───────────────────────────────────────────
 
 	pi.on("session_start", async (_event, ctx) => {
+		// The agent tells us when it is busy; forward.ts needs it before sending,
+		// because sendUserMessage() is fire-and-forget and cannot report the busy error.
+		setIdleProbe(() => ctx.isIdle());
 		// Ensure photo download directory exists
 		const { mkdir } = await import("node:fs/promises");
 		const photoDir = path.join(os.tmpdir(), "telegram-photos");
