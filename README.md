@@ -320,6 +320,11 @@ npm test          # vitest: helpers, commands, tools, forward, stt, menu
 139 tests, including the polling loop with a mocked Bot API, voice routing, the delivery probe and
 the transcription chain. No network and no bot token needed.
 
+## Contributing
+
+Green tests before a PR: `npm test`. Rules and what is easy to accept: [CONTRIBUTING.md](CONTRIBUTING.md).
+Changes per version: [CHANGELOG.md](CHANGELOG.md).
+
 ## License
 
 MIT. Original work © bytesbrains; fork modifications © BalTac. See [LICENSE](LICENSE).
