@@ -23,6 +23,11 @@ export function deliverMode(env: NodeJS.ProcessEnv = process.env): DeliverAs {
 	return raw === "steer" ? "steer" : "followUp";
 }
 
+/** Change the delivery mode for this process (no restart needed). */
+export function setDeliverMode(mode: DeliverAs, env: NodeJS.ProcessEnv = process.env): void {
+	env.PI_TELEGRAM_DELIVER_AS = mode;
+}
+
 const BUSY_ERROR = /already processing|streamingBehavior/i;
 
 type Messenger = Pick<ExtensionAPI, "sendUserMessage">;

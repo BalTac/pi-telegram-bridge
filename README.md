@@ -141,7 +141,12 @@ PI_TELEGRAM_DELIVER_AS=steer      # injects into the running turn, interrupts wh
 ```
 
 Use `steer` when the message changes what the agent should do *now* ("stop, wrong file"); leave
-`followUp` when it is an ordinary new request. Anything that is not the busy error is rethrown, so a
+`followUp` when it is an ordinary new request.
+
+From Telegram, without restarting: `/deliver` shows the current mode, `/deliver steer` and
+`/deliver followUp` change it live. To make the change survive a reload, expose the launcher env
+file with `PI_TELEGRAM_ENV_FILE=/path/to/telegram-bridge.env`: `/deliver` rewrites the
+`PI_TELEGRAM_DELIVER_AS` line there. `/status` shows the active mode too. Anything that is not the busy error is rethrown, so a
 real failure is still visible.
 
 ## Tools exposed to the agent

@@ -11,7 +11,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { sendMsg, getChatId } from "./helpers";
 import * as cp from "node:child_process";
 import * as util from "node:util";
-import { forwardToAgent } from "./forward";
+import { deliverMode, forwardToAgent, setDeliverMode } from "./forward";
 const execAsync = util.promisify(cp.exec);
 
 // ── Command Definitions ─────────────────────────────────────────────
@@ -126,6 +126,13 @@ const COMMANDS: CommandDef[] = [
 			"CRITICAL: Do NOT ask permission to create — /issue IS permission. Limit clarification to 1 round max. If no context found, say so and ask for a title.",
 	},
 	{
+		name: "/deliver",
+		aliases: ["/d"],
+		type: "bridge",
+		description: "steer or follow-up: how messages are queued while the agent works (empty shows current)",
+		ack: "",
+	},
+	{
 		name: "/help",
 		aliases: ["/h"],
 		type: "bridge",
@@ -184,6 +191,63 @@ async function handleHelp(): Promise<string> {
 	return lines.join("\n");
 }
 
+/** Where the mode is remembered between sessions, when the launcher exposes its env file. */
+function envFilePath(): string | null {
+	const p = process.env.PI_TELEGRAM_ENV_FILE?.trim();
+	return p ? p : null;
+}
+
+/** Rewrite PI_TELEGRAM_DELIVER_AS in the env file, so a reload keeps the choice. */
+async function persistDeliverMode(mode: string): Promise<boolean> {
+	const file = envFilePath();
+	if (!file) return false;
+	try {
+		const { readFile, writeFile } = await import("node:fs/promises");
+		const text = await readFile(file, "utf8");
+		const line = `PI_TELEGRAM_DELIVER_AS=${mode}`;
+		const next = /^PI_TELEGRAM_DELIVER_AS=.*$/m.test(text)
+			? text.replace(/^PI_TELEGRAM_DELIVER_AS=.*$/m, line)
+			: `${text.replace(/\s*$/, "")}\n${line}\n`;
+		await writeFile(file, next, "utf8");
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * /deliver           → show the current mode
+ * /deliver steer     → inject messages into the running turn
+ * /deliver followUp  → queue them after the current turn (default)
+ * The change applies immediately to this process; if PI_TELEGRAM_ENV_FILE points at the
+ * launcher env file it is also written there, so the next session starts with it.
+ */
+export async function handleDeliver(args: string): Promise<string> {
+	const current = deliverMode();
+	const raw = args.trim().toLowerCase();
+	const normalized = raw.replace(/[-_\s]/g, "");
+
+	if (!raw) {
+		const persisted = envFilePath() ? "scritta anche nel file env" : "solo in memoria (nessun PI_TELEGRAM_ENV_FILE)";
+		return [
+			"<b>Delivery mode</b>",
+			`<b>Current:</b> <code>${current}</code> — ${persisted}`,
+			"",
+			"<code>/deliver steer</code> — entra subito nel turno in corso, ne cambia il corso",
+			"<code>/deliver followUp</code> — messo in coda, parte dopo il turno in corso",
+		].join("\n");
+	}
+
+	if (normalized === "steer" || normalized === "followup" || normalized === "queue") {
+		const mode = normalized === "steer" ? "steer" : "followUp";
+		setDeliverMode(mode);
+		const saved = await persistDeliverMode(mode);
+		return `✅ Delivery mode: <code>${mode}</code>${saved ? " (salvata per i prossimi avvii)" : " (vale per questa sessione)"}`;
+	}
+
+	return `⚠️ Valori ammessi: <code>steer</code> o <code>followUp</code>. Attuale: <code>${current}</code>`;
+}
+
 async function handleStatus(): Promise<string> {
 	let branch = "unknown";
 	try {
@@ -216,6 +280,7 @@ async function handleStatus(): Promise<string> {
 	const uptimeStr =
 		hrs > 0 ? `${hrs}h ${mins % 60}m` : `${mins}m ${uptime % 60}s`;
 	lines.push(`<b>Process uptime:</b> <code>${uptimeStr}</code>`);
+	lines.push(`<b>Delivery mode:</b> <code>${deliverMode()}</code>`);
 
 	return lines.join("\n");
 }
@@ -248,7 +313,7 @@ export async function handleCommand(
 	if (!cmd) return { handled: false };
 
 	// Send acknowledgment
-	if (sendAck) {
+	if (sendAck && cmd.ack) {
 		await sendMsg(cmd.ack).catch(() => {});
 	}
 
@@ -259,6 +324,9 @@ export async function handleCommand(
 		} else if (cmd.name === "/status") {
 			const statusText = await handleStatus();
 			await sendMsg(statusText, undefined, "HTML").catch(() => {});
+		} else if (cmd.name === "/deliver") {
+			const reply = await handleDeliver(text.trim().split(/\s+/).slice(1).join(" "));
+			await sendMsg(reply, undefined, "HTML").catch(() => {});
 		}
 		return { handled: true, type: "bridge" };
 	}
