@@ -3,6 +3,11 @@
 All notable changes to this fork of `@bytesbrains/pi-telegram-bridge`. The fork starts from upstream
 1.4.1, whose history is not available (the original repository is unreachable).
 
+## 1.5.0 — first npm release (== git tag v1.4.1-baltac.5)
+
+- Published to npm as `pi-telegram-bridge`, so `pi install npm:pi-telegram-bridge` works.
+- README rewritten for discovery, `llms.txt`, `CHANGELOG.md`, `CONTRIBUTING.md`.
+
 ## 1.4.1-baltac.5 — delivery while the agent works, for real
 
 - `sendUserMessage()` is `void` in pi 1.5.x and reports the busy state as a runtime error that cannot

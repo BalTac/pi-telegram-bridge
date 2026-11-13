@@ -93,7 +93,9 @@ pi --extension ./pi-telegram-bridge/src/index.ts --continue
 or as a dependency of a private project (keeps `node_modules` local, no global install):
 
 ```bash
-npm install github:BalTac/pi-telegram-bridge#v1.4.1-baltac.5
+pi install npm:pi-telegram-bridge
+# oppure, dalla sorgente:
+npm install github:BalTac/pi-telegram-bridge#v1.5.0
 ```
 
 `package.json` exposes the extension and the skills through the `pi` field, and the sources are loaded
