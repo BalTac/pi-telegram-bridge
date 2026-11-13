@@ -3,6 +3,11 @@
 All notable changes to this fork of `@bytesbrains/pi-telegram-bridge`. The fork starts from upstream
 1.4.1, whose history is not available (the original repository is unreachable).
 
+## Unreleased — philosophy
+
+- README gained a *Philosophy* section: one session, readable beats complete, no roadmap, honest
+  failures. It states what the project refuses to become, which is the part a fork most needs to know.
+
 ## 1.5.1 — positioning
 
 - One-line identity in README, npm description, GitHub description and `llms.txt`:

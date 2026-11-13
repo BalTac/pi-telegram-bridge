@@ -328,6 +328,17 @@ the transcription chain. No network and no bot token needed.
 Green tests before a PR: `npm test`. Rules and what is easy to accept: [CONTRIBUTING.md](CONTRIBUTING.md).
 Changes per version: [CHANGELOG.md](CHANGELOG.md).
 
+## Philosophy
+
+A personal tool, published because it might be useful to someone else.
+
+- **One session, no routing.** Every feature that needs shared state between processes is a feature
+  this bridge does not have, on purpose.
+- **Readable beats complete.** 2.668 lines you can read in an hour, instead of 128.000 you cannot.
+- **No roadmap, no support promises.** It is customized for one person's workflow; fork it and make
+  it yours. Patches that keep it small are welcome, patches that add a subsystem are not.
+- **Honest failures.** If the transcription does not work, the message says why instead of pretending.
+
 ## License
 
 MIT. Original work © bytesbrains; fork modifications © BalTac. See [LICENSE](LICENSE).
