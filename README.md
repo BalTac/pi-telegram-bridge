@@ -1,5 +1,7 @@
 # pi-telegram-bridge
 
+![pi-telegram-bridge](docs/banner.png)
+
 Telegram bridge for [pi](https://github.com/bytesbrains/pi-telegram-bridge): a background listener that
 forwards Telegram messages (text, photos, **voice notes**) to the agent as user messages, and five
 tools to talk back.
