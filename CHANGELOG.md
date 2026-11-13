@@ -3,6 +3,13 @@
 All notable changes to this fork of `@bytesbrains/pi-telegram-bridge`. The fork starts from upstream
 1.4.1, whose history is not available (the original repository is unreachable).
 
+## 1.5.1 — positioning
+
+- One-line identity in README, npm description, GitHub description and `llms.txt`:
+  *lightweight Telegram control for a single pi session*. Measurable claim: 2.668 lines,
+  zero runtime dependencies, no build step.
+- npm keywords gained `lightweight` and `single-session`.
+
 ## 1.5.0 — first npm release (== git tag v1.4.1-baltac.5)
 
 - Published to npm as `pi-telegram-bridge`, so `pi install npm:pi-telegram-bridge` works.

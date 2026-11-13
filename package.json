@@ -1,13 +1,15 @@
 {
   "name": "pi-telegram-bridge",
-  "version": "1.5.0",
-  "description": "Telegram bridge for pi: voice notes with configurable speech-to-text, Markdown replies, origin prefix. Fork of @bytesbrains/pi-telegram-bridge 1.4.1.",
+  "version": "1.5.1",
+  "description": "Lightweight Telegram control for a single pi session: text, photos and voice notes transcribed locally, via BYOK providers or with the agent's own MCP tools. 2.7k lines, no runtime dependencies, no build step.",
   "license": "MIT",
   "author": "BalTac",
   "contributors": [
     "bytesbrains (original pi-telegram-bridge 1.4.1)"
   ],
   "keywords": [
+    "single-session",
+    "lightweight",
     "pi",
     "pi-coding-agent",
     "extension",

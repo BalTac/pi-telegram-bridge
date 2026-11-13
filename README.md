@@ -5,8 +5,9 @@
 [![tests](https://img.shields.io/badge/tests-139%20passing-brightgreen.svg)](#development)
 [![pi extension](https://img.shields.io/badge/pi-extension-8b5cf6.svg)](https://github.com/earendil-works/pi)
 
-**Telegram bridge for the [pi coding agent](https://github.com/earendil-works/pi): forward messages from
-your phone to the agent, and send voice notes that get transcribed before the agent reads them.**
+**Lightweight Telegram control for a single [pi](https://github.com/earendil-works/pi) session.**
+2.668 lines, zero runtime dependencies, no build step. One session, one chat: forward text, photos and
+voice notes from your phone, and the voice is transcribed before the agent reads it.
 
 Send a text, a photo or a **voice message** from Telegram; the bridge downloads it, transcribes it with
 a local Whisper model, a cloud API or the agent's own MCP tools, and hands the result to the agent as a

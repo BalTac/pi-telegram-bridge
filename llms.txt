@@ -1,8 +1,8 @@
 # pi-telegram-bridge
 
-> Telegram bridge for the pi coding agent: forward text, photos and voice notes from a phone to an
-> agent session, transcribe voice with a local Whisper model, a cloud API (OpenAI, Groq, Mistral) or
-> the agent's own MCP tools, and reply back to the chat. TypeScript, no build step, MIT.
+> Lightweight Telegram control for a single pi session: text, photos and voice notes, transcribed
+> with a local Whisper model, a cloud API (OpenAI, Groq, Mistral) or the agent's own MCP tools.
+> 2.668 lines, zero runtime dependencies, no build step, MIT.
 
 Fork of `@bytesbrains/pi-telegram-bridge` 1.4.1, rebuilt from the npm tarball and maintained at
 https://github.com/BalTac/pi-telegram-bridge
