@@ -1,0 +1,58 @@
+# pi-telegram-bridge
+
+> Telegram bridge for the pi coding agent: forward text, photos and voice notes from a phone to an
+> agent session, transcribe voice with a local Whisper model, a cloud API (OpenAI, Groq, Mistral) or
+> the agent's own MCP tools, and reply back to the chat. TypeScript, no build step, MIT.
+
+Fork of `@bytesbrains/pi-telegram-bridge` 1.4.1, rebuilt from the npm tarball and maintained at
+https://github.com/BalTac/pi-telegram-bridge
+
+## What this project is
+
+- A pi extension (`src/index.ts`) that long-polls the Telegram Bot API and pushes messages into the
+  agent session as user messages.
+- A speech-to-text layer (`src/stt.ts`) with a provider chain: OpenAI-compatible HTTP endpoints
+  (whisper.cpp server, faster-whisper-server, whisper-asr-webservice, LocalAI, OpenAI, Groq, Mistral,
+  DeepInfra, together.ai, Fireworks), local CLI binaries, or agent-side MCP tools.
+- A delivery layer (`src/forward.ts`) that queues messages arriving while the agent is busy, as
+  `followUp` or `steer`, instead of rejecting them.
+- Five tools for the agent: `telegram_listen`, `telegram_send`, `telegram_ask`, `telegram_override`,
+  `telegram_notify`, plus `telegram_status`.
+- Slash commands both sides understand: `/stop`, `/go`, `/sum`, `/redo`, `/skip`, `/files`, `/commit`,
+  `/push`, `/issue`, `/deliver`, `/status`, `/help`.
+
+## Install
+
+```bash
+git clone https://github.com/BalTac/pi-telegram-bridge.git
+pi --extension ./pi-telegram-bridge/src/index.ts
+```
+
+or
+
+```bash
+npm install github:BalTac/pi-telegram-bridge#v1.4.1-baltac.5
+```
+
+## Configuration
+
+`TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are required. Everything else is optional:
+`PI_TELEGRAM_STT_CHAIN`, `PI_TELEGRAM_STT_URL`, `PI_TELEGRAM_STT_MODEL`, `PI_TELEGRAM_STT_LANG`,
+`PI_TELEGRAM_STT_KEY`, `PI_TELEGRAM_STT_CMD`, `PI_TELEGRAM_DELIVER_AS`,
+`PI_TELEGRAM_ORIGIN_PREFIX`, `PI_TELEGRAM_SYNC_MENU`, `PI_TELEGRAM_ENV_FILE`.
+See `.env.example` for the annotated list.
+
+## Source layout
+
+- `src/index.ts` — extension entry point, lifecycle, callbacks
+- `src/helpers.ts` — Bot API client, polling, file download
+- `src/stt.ts` — transcription provider chain
+- `src/forward.ts` — delivery mode and idle probe
+- `src/commands.ts` — slash commands, Telegram command menu
+- `src/tools/telegram.ts` — tool schemas
+- `skills/telegram-first`, `skills/telegram-voice` — agent skills
+- `src/__tests__` — vitest suite (139 tests, no network needed)
+
+## License
+
+MIT. Original work © bytesbrains; fork modifications © BalTac.
