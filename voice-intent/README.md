@@ -132,3 +132,18 @@ qualcosa sbaglia, così può girare in un cron notturno come il self-test dell'a
   precisione, GLiClass si specializza con LoRA sui dati raccolti dal ponte.
 - Testi oltre i 512 token vengono troncati: per messaggi lunghissimi conta la parte
   iniziale, quindi conviene non usare questo gate come unico segnale su documenti.
+
+
+Il sidecar usa `http.server` (nessuna dipendenza oltre a gliclass), quindi la
+documentazione non arriva da FastAPI: la specifica è scritta a mano in `server.py`
+(`_openapi()`) e servita con Swagger UI e ReDoc.
+
+```
+GET  /health            stato e modello caricato
+GET  /openapi.json      specifica OpenAPI 3.1
+GET  /docs              Swagger UI (Try it out attivo)
+GET  /redoc             ReDoc
+POST /classify          {text} -> {voice: 0..1, ms, model}
+POST /v1/chat/completions   stesso modello, contratto OpenAI: VOICE o TEXT
+```
+

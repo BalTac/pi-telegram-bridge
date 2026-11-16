@@ -81,15 +81,98 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_html(self, code: int, html: str) -> None:
+        body = html.encode("utf-8")
+        self.send_response(code)
+        self.send_header("content-type", "text/html; charset=utf-8")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _openapi(self) -> dict:
+        """Specifica scritta a mano: il sidecar usa http.server, non ha FastAPI.
+
+        Resta una sola verita' — questo dict — e due pagine che la leggono (Swagger UI
+        e ReDoc) caricate da CDN. Se la macchina e' offline le pagine non si disegnano,
+        ma /openapi.json resta leggibile come JSON.
+        """
+        model = self.meta.get("model", "large")
+        return {
+            "openapi": "3.1.0",
+            "info": {
+                "title": "GLiClass voice-intent sidecar",
+                "version": "1.1.0",
+                "description": ("Decide se un messaggio chiede una risposta vocale. "
+                                "Un modello zero-shot in memoria, nessuna dipendenza "
+                                "oltre a gliclass/torch/transformers. Il ponte "
+                                "(pi-telegram-bridge) lo chiama solo quando il lessico "
+                                "deterministico non ha gia' deciso."),
+            },
+            "servers": [{"url": "http://127.0.0.1:8197", "description": "locale"},
+                        {"url": "http://192.168.50.129:8197", "description": "LAN"},
+                        {"url": "http://100.64.192.51:8197", "description": "tailnet"}],
+            "paths": {
+                "/health": {"get": {
+                    "summary": "Stato del sidecar e del modello",
+                    "responses": {"200": {"description": "ok", "content": {"application/json": {
+                        "example": {"ok": True, "hypothesis": HYPOTHESIS, "model": model,
+                                    "model_id": PRESETS.get(model, model), "device": "cpu",
+                                    "load_sec": 4.3}}}}}}},
+                "/classify": {"post": {
+                    "summary": "Punteggio 'voce' per un testo",
+                    "requestBody": {"required": True, "content": {"application/json": {
+                        "schema": {"type": "object", "required": ["text"], "properties": {
+                            "text": {"type": "string"}, "input": {"type": "string",
+                                     "description": "alias di text"}}}}}},
+                    "responses": {"200": {"description": "punteggio 0..1",
+                        "content": {"application/json": {"example": {
+                            "voice": 0.9987, "ms": 658, "model": model}}}},
+                        "400": {"description": "text vuoto o JSON non valido"}}}},
+                "/v1/models": {"get": {"summary": "Elenco modelli (compatibilita' OpenAI)",
+                    "responses": {"200": {"description": "ok"}}}},
+                "/v1/chat/completions": {"post": {
+                    "summary": "Stesso modello, contratto OpenAI: risponde VOICE o TEXT",
+                    "requestBody": {"required": True, "content": {"application/json": {
+                        "schema": {"type": "object", "properties": {
+                            "model": {"type": "string"},
+                            "messages": {"type": "array", "items": {"type": "object"}}}}}}},
+                    "responses": {"200": {"description": "chat.completion con voice_intent.score"}}}},
+            },
+        }
+
+    SWAGGER_UI = """<!doctype html><html><head><meta charset="utf-8">
+<title>GLiClass sidecar — API</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css">
+</head><body><div id="swagger-ui"></div>
+<script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+<script>
+SwaggerUIBundle({url: '/openapi.json', dom_id: '#swagger-ui', deepLinking: true,
+                 tryItOutEnabled: true});
+</script></body></html>"""
+
+    REDOC = """<!doctype html><html><head><meta charset="utf-8">
+<title>GLiClass sidecar — reference</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+</head><body><redoc spec-url="/openapi.json"></redoc>
+<script src="https://cdn.jsdelivr.net/npm/redoc@next/bundles/redoc.standalone.js"></script>
+</body></html>"""
+
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/health":
             self._send(200, {"ok": True, "hypothesis": HYPOTHESIS, **self.meta})
+        elif self.path == "/openapi.json":
+            self._send(200, self._openapi())
+        elif self.path in ("/docs", "/docs/"):
+            self._send_html(200, self.SWAGGER_UI)
+        elif self.path in ("/redoc", "/redoc/"):
+            self._send_html(200, self.REDOC)
         elif self.path == "/v1/models":
             self._send(200, {"object": "list",
                              "data": [{"id": self.meta.get("model", "gliclass"),
                                        "object": "model"}]})
         else:
-            self._send(404, {"error": "usa GET /health, GET /v1/models o POST /classify"})
+            self._send(404, {"error": "usa GET /health, /openapi.json, /docs, /redoc, "
+                                      "/v1/models o POST /classify, /v1/chat/completions"})
 
     def _openai_chat(self) -> None:
         """Stesso modello, contratto OpenAI: risponde una parola, VOICE o TEXT.
