@@ -139,7 +139,11 @@ PI_TELEGRAM_SYNC_MENU=0                 # 0 disables the slash-menu sync
 PI_TELEGRAM_ENV_FILE=/path/to/bridge.env # lets /deliver persist the mode
 PI_TELEGRAM_VOICE_MODE=off              # off | phrases | auto (see "Answering with a voice")
 PI_TELEGRAM_VOICE_URL=http://127.0.0.1:8197  # GLiClass sidecar, enables the model tiers
-PI_TELEGRAM_VOICE_HIGH=0.7              # score >= high → voice
+PI_TELEGRAM_VOICE_PROVIDER=classify     # classify (this repo's sidecar) | openai
+PI_TELEGRAM_VOICE_MODEL=gliclass-large  # model name, for the openai provider
+PI_TELEGRAM_VOICE_KEY=                  # bearer token, cloud or LAN gateway
+PI_TELEGRAM_VOICE_PATH=/v1/chat/completions  # path for the openai provider
+PI_TELEGRAM_VOICE_HIGH=0.7              # score >= high → voice (classify provider)
 PI_TELEGRAM_VOICE_LOW=0.3               # score <= low → text, in between → text
 PI_TELEGRAM_VOICE_PHRASES=              # extra phrases, pipe-separated
 PI_TELEGRAM_STATE_DIR=~/.pi-telegram-bridge  # where saved phrases live
@@ -169,6 +173,19 @@ so "alza il volume della voce" never triggers audio.
 Tiers 2 and 3 are the same HTTP contract — `POST {url}/classify` → `{"voice": 0.97}` —
 so switching model is a flag on the sidecar, not a change in the bridge
 (`voice-intent/server.py --model base|large`, see `voice-intent/README.md`).
+
+Any standard OpenAI endpoint works too: set `PI_TELEGRAM_VOICE_PROVIDER=openai` and point
+`PI_TELEGRAM_VOICE_URL` at it (cloud or LAN), with `PI_TELEGRAM_VOICE_MODEL` and
+`PI_TELEGRAM_VOICE_KEY`. The bridge sends a one-paragraph system prompt asking for a
+single word — `VOICE` or `TEXT` — and reads the first token back. That is how a
+gateway that pairs a classifier with a bigger model (one system-1 decision, one
+system-2 escalation) plugs in without any code change.
+
+Trade-off worth knowing: the `openai` provider returns one bit, not a calibrated
+score, so the `HIGH`/`LOW` band disappears — an answer counts as voice or text, and
+the phrase list is still there as the guard. On the 40-sentence set the result is the
+same 37/40 with base and 40/40 with large; a model that answers well is enough, a
+model that hedges needs the `classify` provider to expose scores.
 
 If the sidecar is missing, slow or down, the bridge degrades to tier 1 and keeps
 working; after three consecutive failures it stops calling it for a minute.

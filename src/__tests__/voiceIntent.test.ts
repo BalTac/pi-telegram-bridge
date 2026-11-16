@@ -174,6 +174,68 @@ describe("decideVoiceIntent", () => {
 	});
 });
 
+describe("provider openai (sistema uno in cloud o in LAN)", () => {
+	function chatFetch(answer: string, capture?: { url?: string; body?: any; auth?: string }) {
+		return (async (url: string, init: any) => {
+			if (capture) {
+				capture.url = String(url);
+				capture.body = JSON.parse(String(init.body));
+				capture.auth = init.headers?.Authorization;
+			}
+			return new Response(
+				JSON.stringify({ choices: [{ message: { role: "assistant", content: answer } }] }),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			);
+		}) as unknown as typeof fetch;
+	}
+
+	const openaiCfg = () =>
+		loadVoiceConfig(
+			{
+				PI_TELEGRAM_VOICE_MODE: "auto",
+				PI_TELEGRAM_VOICE_URL: "http://192.168.50.180:8092",
+				PI_TELEGRAM_VOICE_PROVIDER: "openai",
+				PI_TELEGRAM_VOICE_MODEL: "gliclass-base",
+				PI_TELEGRAM_VOICE_KEY: "k-123",
+				PI_TELEGRAM_STATE_DIR: createTempStore(),
+			} as NodeJS.ProcessEnv,
+			{ extra: [], disabled: [] },
+		);
+
+	it("chiama /v1/chat/completions con il prompt e la chiave", async () => {
+		const capture: { url?: string; body?: any; auth?: string } = {};
+		const c = openaiCfg();
+		const d = await decideVoiceIntent("fammi un riassunto", c, chatFetch("VOICE", capture));
+		expect(d).toMatchObject({ voice: true, source: "model", score: 1 });
+		expect(capture.url).toBe("http://192.168.50.180:8092/v1/chat/completions");
+		expect(capture.body.model).toBe("gliclass-base");
+		expect(capture.body.temperature).toBe(0);
+		expect(capture.body.messages[0].content).toContain("VOICE");
+		expect(capture.body.messages[1].content).toBe("fammi un riassunto");
+		expect(capture.auth).toBe("Bearer k-123");
+	});
+
+	it("TEXT è testo, e la risposta sporca non decide", async () => {
+		const c = openaiCfg();
+		expect((await decideVoiceIntent("x", c, chatFetch("text"))).voice).toBe(false);
+		expect((await decideVoiceIntent("x", c, chatFetch("  VOICE"))).voice).toBe(true);
+		const odd = await decideVoiceIntent("x", c, chatFetch("boh"));
+		expect(odd).toMatchObject({ voice: false, source: "backend-error" });
+	});
+
+	it("il lessico decide prima di chiamare il gateway", async () => {
+		const c = openaiCfg();
+		let called = false;
+		const spy = (async () => {
+			called = true;
+			return new Response("{}", { status: 200 });
+		}) as unknown as typeof fetch;
+		const d = await decideVoiceIntent("rispondi con un vocale", c, spy);
+		expect(d.source).toBe("phrase");
+		expect(called).toBe(false);
+	});
+});
+
 describe("integrazione con il testo inoltrato", () => {
 	it("la direttiva compare solo quando serve", async () => {
 		const c = cfg();

@@ -84,10 +84,59 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/health":
             self._send(200, {"ok": True, "hypothesis": HYPOTHESIS, **self.meta})
+        elif self.path == "/v1/models":
+            self._send(200, {"object": "list",
+                             "data": [{"id": self.meta.get("model", "gliclass"),
+                                       "object": "model"}]})
         else:
-            self._send(404, {"error": "usa GET /health o POST /classify"})
+            self._send(404, {"error": "usa GET /health, GET /v1/models o POST /classify"})
+
+    def _openai_chat(self) -> None:
+        """Stesso modello, contratto OpenAI: risponde una parola, VOICE o TEXT.
+
+        Serve a due cose: fa funzionare il provider `openai` del ponte anche contro
+        questo sidecar (utile per misurare il percorso senza un gateway), e rende
+        confrontabili le latenze con un qualsiasi endpoint standard.
+        """
+        try:
+            length = int(self.headers.get("content-length") or 0)
+            payload = json.loads(self.rfile.read(length) if length else b"{}")
+            messages = payload.get("messages") or []
+            text = ""
+            for msg in messages:
+                if isinstance(msg, dict) and msg.get("role") == "user":
+                    text = str(msg.get("content") or "")
+        except (ValueError, json.JSONDecodeError):
+            self._send(400, {"error": {"message": "JSON non valido"}})
+            return
+        text = text.strip()
+        if not text:
+            self._send(400, {"error": {"message": "nessun messaggio utente"}})
+            return
+        started = time.perf_counter()
+        try:
+            voice = score(self.pipe, text)
+        except Exception as exc:  # noqa: BLE001
+            self._send(500, {"error": {"message": str(exc)[:200]}})
+            return
+        self._send(200, {
+            "id": "chatcmpl-" + str(int(time.time() * 1000)),
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": payload.get("model") or self.meta.get("model"),
+            "choices": [{"index": 0, "finish_reason": "stop",
+                          "message": {"role": "assistant",
+                                      "content": "VOICE" if voice >= 0.5 else "TEXT"}}],
+            "usage": {"prompt_tokens": len(text.split()), "completion_tokens": 1,
+                      "total_tokens": len(text.split()) + 1},
+            "voice_intent": {"score": round(voice, 4),
+                             "ms": round((time.perf_counter() - started) * 1000)},
+        })
 
     def do_POST(self) -> None:  # noqa: N802
+        if self.path == "/v1/chat/completions":
+            self._openai_chat()
+            return
         if self.path != "/classify":
             self._send(404, {"error": "endpoint sconosciuto"})
             return

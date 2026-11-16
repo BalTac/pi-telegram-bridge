@@ -25,11 +25,28 @@ import * as path from "node:path";
 
 export type VoiceMode = "off" | "phrases" | "auto";
 
+/**
+ * How the backend speaks. `classify` is this repo's sidecar contract
+ * (`POST {url}/classify` → `{voice: 0.97}`); `openai` is the standard
+ * `/v1/chat/completions` shape, for a system-one model in the cloud or on the LAN
+ * (llama.cpp, vLLM, LM Studio, a gateway with a prompt in front).
+ */
+export type VoiceProvider = "classify" | "openai";
+
 export interface VoiceConfig {
 	/** off: never tag. phrases: only the list. auto: list then sidecar (if configured). */
 	mode: VoiceMode;
 	/** Sidecar base URL, e.g. http://127.0.0.1:8197. Empty string = no sidecar. */
 	url: string;
+	provider: VoiceProvider;
+	/** Model name for the openai provider. */
+	model: string;
+	/** Bearer token, when the endpoint wants one. */
+	key: string;
+	/** Path appended to url for the openai provider. */
+	path: string;
+	/** System prompt for the openai provider: must answer VOICE or TEXT. */
+	prompt: string;
 	/** Score at or above this means "voice". */
 	high: number;
 	/** Score at or below this means "text". Between low and high = unsure = text. */
@@ -51,6 +68,11 @@ export interface PhraseStore {
 
 const DEFAULT_DIRECTIVE =
 	"\n\n[voce] L'utente chiede la risposta come vocale: sintetizza e invia l'audio, non il testo.";
+
+const DEFAULT_PROMPT =
+	"Decidi se il messaggio chiede una risposta audio. Rispondi con una sola parola: " +
+	"VOICE se chiede un vocale o un audio, TEXT in ogni altro caso, incluse le frasi " +
+	"che nominano la voce senza chiederla (volume, timbro, 'la voce di X'). Nessuna spiegazione.";
 
 /**
  * Canonical phrases, kept deliberately short and channel-specific: "voce" alone
@@ -162,6 +184,13 @@ export function loadVoiceConfig(
 	return {
 		mode,
 		url,
+		provider: (env.PI_TELEGRAM_VOICE_PROVIDER ?? "classify").trim().toLowerCase() === "openai"
+			? "openai"
+			: "classify",
+		model: (env.PI_TELEGRAM_VOICE_MODEL ?? "default").trim() || "default",
+		key: (env.PI_TELEGRAM_VOICE_KEY ?? "").trim(),
+		path: (env.PI_TELEGRAM_VOICE_PATH ?? "/v1/chat/completions").trim(),
+		prompt: env.PI_TELEGRAM_VOICE_PROMPT ?? DEFAULT_PROMPT,
 		high: numberOr(env.PI_TELEGRAM_VOICE_HIGH, 0.7),
 		low: numberOr(env.PI_TELEGRAM_VOICE_LOW, 0.3),
 		timeoutMs: numberOr(env.PI_TELEGRAM_VOICE_TIMEOUT_MS, 4000),
@@ -241,22 +270,50 @@ export function backendHealth(): { failures: number; quietForMs: number } {
 	return { failures: health.failures, quietForMs: Math.max(0, health.quietUntil - Date.now()) };
 }
 
-async function askSidecar(
+async function askBackend(
 	text: string,
 	cfg: VoiceConfig,
 	fetchImpl: FetchLike,
 ): Promise<{ score: number } | { error: string }> {
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
+	const base = cfg.url.replace(/\/+$/, "");
 	try {
-		const res = await fetchImpl(`${cfg.url.replace(/\/+$/, "")}/classify`, {
+		const headers: Record<string, string> = { "Content-Type": "application/json" };
+		if (cfg.key) headers.Authorization = `Bearer ${cfg.key}`;
+		const openai = cfg.provider === "openai";
+		const res = await fetchImpl(openai ? `${base}${cfg.path}` : `${base}/classify`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ text }),
+			headers,
+			body: JSON.stringify(
+				openai
+					? {
+							model: cfg.model,
+							temperature: 0,
+							max_tokens: 4,
+							stream: false,
+							messages: [
+								{ role: "system", content: cfg.prompt },
+								{ role: "user", content: text },
+							],
+						}
+					: { text },
+			),
 			signal: controller.signal,
 		});
 		if (!res.ok) return { error: `HTTP ${res.status}` };
-		const body = (await res.json()) as { voice?: unknown; score?: unknown };
+		const body = (await res.json()) as {
+			voice?: unknown;
+			score?: unknown;
+			choices?: { message?: { content?: unknown } }[];
+		};
+		if (openai) {
+			const content = body.choices?.[0]?.message?.content;
+			const word = typeof content === "string" ? content.trim().toLowerCase() : "";
+			if (/^voice\b/.test(word)) return { score: 1 };
+			if (/^text\b/.test(word)) return { score: 0 };
+			return { error: `risposta non riconosciuta: ${word.slice(0, 20) || "vuota"}` };
+		}
 		const raw = typeof body.voice === "number" ? body.voice : body.score;
 		if (typeof raw !== "number" || !Number.isFinite(raw)) return { error: "no score" };
 		return { score: Math.min(1, Math.max(0, raw)) };
@@ -284,7 +341,7 @@ export async function decideVoiceIntent(
 	if (Date.now() < health.quietUntil) {
 		return { voice: false, source: "backend-error", detail: "sidecar in pausa" };
 	}
-	const result = await askSidecar(text, cfg, fetchImpl);
+	const result = await askBackend(text, cfg, fetchImpl);
 	if ("error" in result) {
 		health.failures += 1;
 		if (health.failures >= FAILURE_LIMIT) health.quietUntil = Date.now() + QUIET_MS;

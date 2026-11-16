@@ -60,12 +60,38 @@ curl -s -X POST http://127.0.0.1:8197/classify \
 con due soglie: ≥ `PI_TELEGRAM_VOICE_HIGH` voce, ≤ `PI_TELEGRAM_VOICE_LOW` testo, in
 mezzo incerto → testo.
 
+Lo stesso processo parla anche il contratto OpenAI, così il provider `openai` del ponte
+può puntarci (comodo per misurare il percorso senza un gateway, o per usarlo da un
+altro client):
+
+```bash
+curl -s -X POST http://127.0.0.1:8197/v1/chat/completions \
+     -H 'content-type: application/json' \
+     -d '{"model":"gliclass-base","messages":[{"role":"user","content":"rispondi con un vocale"}]}'
+# choices[0].message.content == "VOICE", più voice_intent.score e voice_intent.ms
+```
+
 ## Come lo usa il ponte
 
 ```bash
 export PI_TELEGRAM_VOICE_URL=http://127.0.0.1:8197     # accende il livello 2/3
 export PI_TELEGRAM_VOICE_MODE=auto                     # off | phrases | auto
 ```
+
+Con un endpoint OpenAI standard al posto del sidecar:
+
+```bash
+export PI_TELEGRAM_VOICE_PROVIDER=openai
+export PI_TELEGRAM_VOICE_URL=http://192.168.50.180:8092   # o https://api...
+export PI_TELEGRAM_VOICE_MODEL=gliclass-base
+export PI_TELEGRAM_VOICE_KEY=...                          # se serve
+export PI_TELEGRAM_VOICE_PATH=/v1/chat/completions         # default
+```
+
+Il prompt chiede una parola sola (`VOICE`/`TEXT`) e si legge il primo token. Con questo
+provider si perde il punteggio calibrato: la banda HIGH/LOW sparisce e resta la lista
+delle frasi come guardia. Se l'endpoint risponde qualcosa che non inizia con VOICE o
+TEXT, la risposta è trattata come errore e il gate degrada (mai voce per sbaglio).
 
 Senza `PI_TELEGRAM_VOICE_URL` il ponte resta alle sole frasi: nessun errore, nessun
 timeout, e la funzione continua a servire su un Pi 4.
