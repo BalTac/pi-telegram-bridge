@@ -31,10 +31,22 @@ import {
 	overrideSchema,
 	notifySchema,
 	sendPhotoSchema,
+	voiceTriggerSchema,
 } from "./tools/telegram";
 import { commandMenu, handleCommand, isPossibleCommand } from "./commands";
 import { transcribe } from "./stt";
 import { forwardToAgent, setIdleProbe } from "./forward";
+import {
+	DEFAULT_PHRASES,
+	decideVoiceIntent,
+	describeDecision,
+	loadPhraseStore,
+	loadVoiceConfig,
+	phraseStorePath,
+	savePhraseStore,
+	voiceDirective,
+	describeStore,
+} from "./voiceIntent";
 
 /** Prepended to forwarded user messages so the agent knows who is talking. */
 const ORIGIN_PREFIX = () => process.env.PI_TELEGRAM_ORIGIN_PREFIX ?? "[telegram]";
@@ -43,6 +55,27 @@ export default function telegramBridge(pi: ExtensionAPI) {
 	let botId: number | null = null;
 	let listenerAbort: AbortController | null = null;
 	let lastUpdateId = 0;
+
+	/**
+	 * Voice gate (tiers: phrases → gliclass base/large sidecar). Returns the text to
+	 * forward (directive appended) or just the directive, never throws, leaves slash
+	 * commands alone.
+	 */
+	async function voiceSuffix(text: string): Promise<string> {
+		if (!text || text.startsWith("/")) return "";
+		try {
+			const cfg = loadVoiceConfig();
+			if (cfg.mode === "off") return "";
+			const decision = await decideVoiceIntent(text, cfg);
+			return voiceDirective(cfg, decision);
+		} catch {
+			return "";
+		}
+	}
+
+	async function withVoiceIntent(text: string): Promise<string> {
+		return text + (await voiceSuffix(text));
+	}
 
 	// ── Session lifecycle ───────────────────────────────────────────
 
@@ -115,7 +148,7 @@ export default function telegramBridge(pi: ExtensionAPI) {
 					// Unknown command — fall through to forward as regular message
 				}
 				// ponytail: un prefisso, niente API. Unico modo per far sapere all'agente l'origine.
-				await forwardToAgent(pi, `${ORIGIN_PREFIX()} ${text}`);
+				await forwardToAgent(pi, `${ORIGIN_PREFIX()} ${await withVoiceIntent(text)}`);
 				await sendMsg(
 					`👂 Got it! Working on: _${text.slice(0, 100)}_`,
 					undefined,
@@ -311,7 +344,7 @@ export default function telegramBridge(pi: ExtensionAPI) {
 								content: [
 									{
 										type: "text",
-										text: `📩 New message: "${text}"`,
+										text: `📩 New message: "${text}"${await voiceSuffix(text)}`,
 									},
 								],
 								details: { message: text },
@@ -639,6 +672,94 @@ export default function telegramBridge(pi: ExtensionAPI) {
 					details: {},
 				};
 			}
+		},
+	});
+
+	// voice_trigger — the agent manages the deterministic phrase list
+	pi.registerTool({
+		name: "voice_trigger",
+		label: "Voice Trigger",
+		description:
+			"Manage the phrases that make the bridge answer with a voice message. Actions: status (mode, thresholds, sidecar), list/ add/ remove (deterministic phrase list, persisted to disk), test (classify a string and say which tier decided).",
+		parameters: voiceTriggerSchema,
+		async execute(_toolCallId, params) {
+			const action = params.action;
+			const cfg = loadVoiceConfig();
+			const storePath = phraseStorePath();
+			if (action === "add" || action === "remove") {
+				const list = (params.phrases ?? []).map((p) => p.trim()).filter(Boolean);
+				if (list.length === 0) {
+					return {
+						content: [{ type: "text", text: "Nessuna frase passata: usa il campo phrases." }],
+						details: {},
+					};
+				}
+				const store = loadPhraseStore(storePath);
+				if (action === "add") {
+					store.extra = [...store.extra, ...list];
+					store.disabled = store.disabled.filter(
+						(d) => !list.some((p) => p.toLowerCase() === d.toLowerCase()),
+					);
+				} else {
+					const removing = new Set(list.map((p) => p.toLowerCase()));
+					const isDefault = (p: string) =>
+						DEFAULT_PHRASES.some((d) => d.toLowerCase() === p.toLowerCase());
+					store.extra = store.extra.filter((p) => !removing.has(p.toLowerCase()));
+					store.disabled = [
+						...new Set([
+							...store.disabled,
+							...list.filter(isDefault),
+						]),
+					];
+				}
+				savePhraseStore(store, storePath);
+				return {
+					content: [
+						{
+							type: "text",
+							text: `${action === "add" ? "Aggiunte" : "Rimosse"}: ${list.join(", ")}\n${describeStore(loadPhraseStore(storePath))}`,
+						},
+					],
+					details: { store: loadPhraseStore(storePath) },
+				};
+			}
+			if (action === "test") {
+				const sample = (params.text ?? "").trim();
+				if (!sample) {
+					return {
+						content: [{ type: "text", text: "Serve il campo text." }],
+						details: {},
+					};
+				}
+				const decision = await decideVoiceIntent(sample, cfg);
+				return {
+					content: [
+						{ type: "text", text: `"${sample}" → ${describeDecision(decision)}` },
+					],
+					details: decision,
+				};
+			}
+			if (action === "list") {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `${cfg.phrases.length} frasi attive (${DEFAULT_PHRASES.length} di default):\n- ${cfg.phrases.join("\n- ")}\n${describeStore(loadPhraseStore(storePath))}`,
+						},
+					],
+					details: { count: cfg.phrases.length, store: loadPhraseStore(storePath) },
+				};
+			}
+			const health = cfg.mode === "off" ? "gate spento" : cfg.url || "senza sidecar (solo frasi)";
+			return {
+				content: [
+					{
+						type: "text",
+						text: `modalità: ${cfg.mode} · sidecar: ${health} · soglie ${cfg.low}-${cfg.high} · ${cfg.phrases.length} frasi${cfg.mode === "off" ? " (PI_TELEGRAM_VOICE_MODE=off)" : ""}`,
+					},
+				],
+				details: { mode: cfg.mode, url: cfg.url, low: cfg.low, high: cfg.high },
+			};
 		},
 	});
 }

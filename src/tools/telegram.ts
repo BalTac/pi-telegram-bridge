@@ -216,6 +216,24 @@ export const askSchema = Type.Object({
 
 export const statusSchema = Type.Object({});
 
+// ── Voice trigger ───────────────────────────────────────────────────
+// The agent manages the deterministic phrase list: the human says "salva questa
+// frase chiave" and the agent calls this tool. No model needed for the fast path.
+
+export const voiceTriggerSchema = Type.Object({
+	action: Type.Union([
+		Type.Literal("status"),
+		Type.Literal("list"),
+		Type.Literal("add"),
+		Type.Literal("remove"),
+		Type.Literal("test"),
+	]),
+	/** Phrases to add or remove (action add/remove). */
+	phrases: Type.Optional(Type.Array(Type.String())),
+	/** Message to classify (action test). */
+	text: Type.Optional(Type.String()),
+});
+
 export const overrideSchema = Type.Object({
 	command: Type.String(),
 	reason: Type.String(),

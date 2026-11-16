@@ -137,10 +137,46 @@ PI_TELEGRAM_STT_CMD=whisper-cli -m /models/ggml-base.bin -l it -nt -f {file}
 PI_TELEGRAM_STT_TIMEOUT_MS=120000
 PI_TELEGRAM_SYNC_MENU=0                 # 0 disables the slash-menu sync
 PI_TELEGRAM_ENV_FILE=/path/to/bridge.env # lets /deliver persist the mode
+PI_TELEGRAM_VOICE_MODE=off              # off | phrases | auto (see "Answering with a voice")
+PI_TELEGRAM_VOICE_URL=http://127.0.0.1:8197  # GLiClass sidecar, enables the model tiers
+PI_TELEGRAM_VOICE_HIGH=0.7              # score >= high → voice
+PI_TELEGRAM_VOICE_LOW=0.3               # score <= low → text, in between → text
+PI_TELEGRAM_VOICE_PHRASES=              # extra phrases, pipe-separated
+PI_TELEGRAM_STATE_DIR=~/.pi-telegram-bridge  # where saved phrases live
 ```
 
 A note on `TELEGRAM_CHAT_ID`: the chat id is not the bot id, and a group id is negative. Send `/start`
 to the bot, then read `message.chat.id` from `getUpdates`.
+
+## Answering with a voice
+
+An inbound message can be tagged so the agent answers with audio instead of text. The
+decision is made by three tiers, cheapest first, and each tier exists because a smaller
+machine has to run the same code:
+
+| tier | how | cost | runs on |
+|---|---|---|---|
+| 1 | deterministic phrase list | 0 ms | anything, including a Pi 4 |
+| 2 | GLiClass base v3.0 sidecar | ~160 ms | Pi 5, mini-pc |
+| 3 | GLiClass large v3.0 sidecar | ~540 ms | laptop with a GPU / recent CPU |
+
+Tier 1 needs no model: the human says "save this phrase" and the agent calls the
+`voice_trigger` tool with `action: "add"`. Phrases persist in
+`$PI_TELEGRAM_STATE_DIR/voice-phrases.json` and are matched after normalisation
+(lowercase, no accents, no punctuation). A built-in negative list wins over everything,
+so "alza il volume della voce" never triggers audio.
+
+Tiers 2 and 3 are the same HTTP contract — `POST {url}/classify` → `{"voice": 0.97}` —
+so switching model is a flag on the sidecar, not a change in the bridge
+(`voice-intent/server.py --model base|large`, see `voice-intent/README.md`).
+
+If the sidecar is missing, slow or down, the bridge degrades to tier 1 and keeps
+working; after three consecutive failures it stops calling it for a minute.
+
+Measured on 40 sentences (22 asking for audio in it/en/de/fr/es, 18 not), CPU:
+phrases only decides 21/40 with no mistakes; phrases + base reaches 92,5%; phrases +
+large reaches 40/40. The phrase list is what turns large's one error into a correct
+answer, which is why the cheap tier stays even when a model is available.
 
 ## Voice notes: three ways to get a transcript
 
@@ -259,7 +295,8 @@ Bridge-only (answered immediately, the agent is not involved):
 
 `telegram_listen` · `telegram_send` · `telegram_ask` (blocking, with option buttons) ·
 `telegram_override` (human approval for a blocked action) · `telegram_notify` (rich formatted
-notifications) · `telegram_status` (shows the resolved STT chain).
+notifications) · `telegram_status` (shows the resolved STT chain) · `voice_trigger` (manage the
+phrases that make the agent answer with audio).
 
 ## Skills
 

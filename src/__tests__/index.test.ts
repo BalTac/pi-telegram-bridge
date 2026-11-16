@@ -104,16 +104,17 @@ afterEach(() => {
 // ── Tool Registration ─────────────────────────────────────────────
 
 describe("extension registration", () => {
-	it("registers all 7 tools", () => {
+	it("registers all 8 tools", () => {
 		const pi = createMockPI();
 		telegramBridge(pi as any);
 
-		expect(pi.registerTool).toHaveBeenCalledTimes(7);
+		expect(pi.registerTool).toHaveBeenCalledTimes(8);
 		expect(pi._getTool("telegram_listen")).toBeDefined();
 		expect(pi._getTool("telegram_send")).toBeDefined();
 		expect(pi._getTool("telegram_ask")).toBeDefined();
 		expect(pi._getTool("telegram_override")).toBeDefined();
 		expect(pi._getTool("telegram_status")).toBeDefined();
+		expect(pi._getTool("voice_trigger")).toBeDefined();
 		expect(pi._getTool("telegram_notify")).toBeDefined();
 		expect(pi._getTool("telegram_send_photo")).toBeDefined();
 	});
