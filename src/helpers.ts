@@ -302,15 +302,75 @@ export async function seedLastUpdateId(
 	return lastUpdateId;
 }
 
+/**
+ * The message the human replied to, on Telegram, with the keyboard quote feature.
+ * Kept as data: the caller decides what to download and how to describe it.
+ */
+export interface QuotedMessage {
+	/** Message id in the chat, useful to mention it back. */
+	messageId: number;
+	/** Display name of who wrote the quoted message. */
+	from?: string;
+	kind: "text" | "photo" | "voice" | "audio" | "video" | "video_note" | "document" | "other";
+	/** Text body, or the caption for media. */
+	text?: string;
+	/** Media to download, when the quote is not text. */
+	fileId?: string;
+	/** Duration in seconds for voice/audio/video notes. */
+	duration?: number;
+	/** Original file name, when Telegram sends one (documents). */
+	fileName?: string;
+}
+
+/** Minimal shape of a Telegram message we care about. */
+type TgMessage = {
+	message_id: number;
+	chat: { id: number };
+	from?: { id: number; is_bot?: boolean; first_name?: string; username?: string };
+	text?: string;
+	caption?: string;
+	photo?: Array<{ file_id: string }>;
+	voice?: { file_id: string; duration: number };
+	audio?: { file_id: string; duration: number; file_name?: string };
+	video?: { file_id: string; duration: number; file_name?: string };
+	video_note?: { file_id: string; duration: number };
+	document?: { file_id: string; file_name?: string };
+	reply_to_message?: TgMessage;
+};
+
+function displayName(msg: TgMessage | undefined): string | undefined {
+	if (!msg?.from) return undefined;
+	return msg.from.first_name || msg.from.username || String(msg.from.id);
+}
+
+/**
+ * Turn `reply_to_message` into a plain object. Pure: no network, no disk.
+ * Returns null when the message is not a reply.
+ */
+export function extractQuote(msg: TgMessage | undefined): QuotedMessage | null {
+	const q = msg?.reply_to_message;
+	if (!q) return null;
+	const base = { messageId: q.message_id, from: displayName(q), text: q.text || q.caption };
+	if (q.text) return { ...base, kind: "text" };
+	const largest = q.photo?.[q.photo.length - 1];
+	if (largest) return { ...base, kind: "photo", fileId: largest.file_id };
+	if (q.voice) return { ...base, kind: "voice", fileId: q.voice.file_id, duration: q.voice.duration };
+	if (q.audio) return { ...base, kind: "audio", fileId: q.audio.file_id, duration: q.audio.duration, fileName: q.audio.file_name };
+	if (q.video) return { ...base, kind: "video", fileId: q.video.file_id, duration: q.video.duration, fileName: q.video.file_name };
+	if (q.video_note) return { ...base, kind: "video_note", fileId: q.video_note.file_id, duration: q.video_note.duration };
+	if (q.document) return { ...base, kind: "document", fileId: q.document.file_id, fileName: q.document.file_name };
+	return { ...base, kind: "other" };
+}
+
 export async function pollUpdates(
 	token: string,
 	chatId: string,
 	botId: number | null,
 	lastUpdateId: number,
 	signal: AbortSignal,
-	onMessage: (text: string) => void,
-	onPhoto: (photoId: string, caption?: string) => void,
-	onVoice: (fileId: string, duration?: number) => void,
+	onMessage: (text: string, quote?: QuotedMessage) => void,
+	onPhoto: (photoId: string, caption?: string, quote?: QuotedMessage) => void,
+	onVoice: (fileId: string, duration?: number, quote?: QuotedMessage) => void,
 	onUpdateId: (id: number) => void,
 ): Promise<void> {
 	while (!signal.aborted) {
@@ -329,15 +389,7 @@ export async function pollUpdates(
 				ok: boolean;
 				result: Array<{
 					update_id: number;
-					message?: {
-						message_id: number;
-						chat: { id: number };
-						from?: { id: number; is_bot?: boolean };
-						text?: string;
-						photo?: Array<{ file_id: string; file_unique_id: string; width: number; height: number }>;
-						voice?: { file_id: string; file_unique_id: string; duration: number; mime_type?: string };
-						caption?: string;
-					};
+					message?: TgMessage;
 					callback_query?: unknown;
 				}>;
 			};
@@ -360,18 +412,24 @@ export async function pollUpdates(
 					}
 					// Voice note: forwarded to onVoice, which transcribes it (see stt.ts)
 					if (u.message.voice) {
-						onVoice(u.message.voice.file_id, u.message.voice.duration);
+						const q = extractQuote(u.message);
+						if (q) onVoice(u.message.voice.file_id, u.message.voice.duration, q);
+						else onVoice(u.message.voice.file_id, u.message.voice.duration);
 						continue;
 					}
 					// Photo message
 					if (u.message.photo && u.message.photo.length > 0) {
 						const largest = u.message.photo[u.message.photo.length - 1];
-						onPhoto(largest.file_id, u.message.caption);
+						const q = extractQuote(u.message);
+						if (q) onPhoto(largest.file_id, u.message.caption, q);
+						else onPhoto(largest.file_id, u.message.caption);
 						continue;
 					}
 					// Text message
 					if (u.message.text) {
-						onMessage(u.message.text);
+						const q = extractQuote(u.message);
+						if (q) onMessage(u.message.text, q);
+						else onMessage(u.message.text);
 					}
 				}
 			}

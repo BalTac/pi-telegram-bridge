@@ -21,6 +21,7 @@ import {
 	seedLastUpdateId,
 	pollUpdates,
 } from "./helpers";
+import type { QuotedMessage } from "./helpers";
 import * as path from "node:path";
 import * as os from "node:os";
 import {
@@ -75,6 +76,48 @@ export default function telegramBridge(pi: ExtensionAPI) {
 
 	async function withVoiceIntent(text: string): Promise<string> {
 		return text + (await voiceSuffix(text));
+	}
+
+	/**
+	 * The quoted message, resolved. Telegram sends only the reference, so without this
+	 * the agent reads the new text and knows nothing about what it answers to.
+	 *
+	 * Text goes inline; photos, videos and documents are downloaded to the same temp
+	 * folder as normal attachments; voice notes are transcribed with the same chain.
+	 */
+	async function quoteBlock(quote?: QuotedMessage): Promise<string> {
+		if (!quote) return "";
+		const who = quote.from ? ` di ${quote.from}` : "";
+		const head = `↩️ In risposta a${who} (msg ${quote.messageId})`;
+		if (quote.kind === "text") {
+			const body = (quote.text ?? "").trim();
+			const short = body.length > 2000 ? `${body.slice(0, 2000)}…` : body;
+			return `${head}:\n${short}\n———\n`;
+		}
+		if (!quote.fileId) return `${head}: [${quote.kind}]\n———\n`;
+		const ext = quote.fileName
+			? path.extname(quote.fileName) || ".bin"
+			: quote.kind === "photo"
+				? ".jpg"
+				: quote.kind === "voice"
+					? ".ogg"
+					: quote.kind === "audio"
+						? ".mp3"
+						: ".mp4";
+		const dir = path.join(os.tmpdir(), "telegram-photos");
+		const dest = path.join(dir, `quoted_${quote.messageId}_${Date.now()}${ext}`);
+		const got = await downloadFile(quote.fileId, dest);
+		if (!got) return `${head}: [${quote.kind} non scaricato]\n———\n`;
+		const secs = quote.duration === undefined ? "" : ` ${quote.duration}s`;
+		if (quote.kind === "voice" || quote.kind === "audio" || quote.kind === "video_note") {
+			const stt = await transcribe(got);
+			const words = stt.text
+				? `Trascrizione: ${stt.text}`
+				: `Trascrizione assente (${stt.error ?? "STT non configurato"}): ascolta il file.`;
+			return `${head} — ${quote.kind}${secs}\n${words}\nPath: ${got}\n———\n`;
+		}
+		const caption = quote.text ? `\nDidascalia: ${quote.text}` : "";
+		return `${head} — ${quote.kind}${secs}${caption}\nPath: ${got}\n———\n`;
 	}
 
 	// ── Session lifecycle ───────────────────────────────────────────
@@ -141,14 +184,18 @@ export default function telegramBridge(pi: ExtensionAPI) {
 			lastUpdateId,
 			signal,
 			// onMessage: check for slash commands first, otherwise forward to pi
-			async (text: string) => {
+			async (text: string, quote?: QuotedMessage) => {
 				if (isPossibleCommand(text)) {
 					const result = await handleCommand(text, pi, true);
 					if (result.handled) return; // bridge or agent handled it
 					// Unknown command — fall through to forward as regular message
 				}
+				const quoted = await quoteBlock(quote);
 				// ponytail: un prefisso, niente API. Unico modo per far sapere all'agente l'origine.
-				await forwardToAgent(pi, `${ORIGIN_PREFIX()} ${await withVoiceIntent(text)}`);
+				await forwardToAgent(
+					pi,
+					`${ORIGIN_PREFIX()} ${quoted}${await withVoiceIntent(text)}`,
+				);
 				await sendMsg(
 					`👂 Got it! Working on: _${text.slice(0, 100)}_`,
 					undefined,
@@ -156,22 +203,23 @@ export default function telegramBridge(pi: ExtensionAPI) {
 				);
 			},
 			// onPhoto: download and forward photo + caption to pi
-			async (photoId: string, caption?: string) => {
+			async (photoId: string, caption?: string, quote?: QuotedMessage) => {
 				const timestamp = Date.now();
 				const filename = `photo_${timestamp}.jpg`;
 				const destPath = path.join(photoDir, filename);
+				const quoted = await quoteBlock(quote);
 				const result = await downloadFile(photoId, destPath);
 				if (result) {
 					const captionText = caption ? `\n\n📝 Caption: ${caption}` : "";
 					await forwardToAgent(
 						pi,
-						`📸 Photo received from Telegram\nPath: ${result}${captionText}\n\nUse read("${result}") to view the image.`,
+						`${quoted}📸 Photo received from Telegram\nPath: ${result}${captionText}\n\nUse read("${result}") to view the image.`,
 					);
 					await sendMsg("📸 Photo received! Processing...");
 				} else {
 					await forwardToAgent(
 						pi,
-						"📸 Photo received from Telegram but could not be downloaded.",
+						`${quoted}📸 Photo received from Telegram but could not be downloaded.`,
 					);
 					await sendMsg(
 						"⚠️ Could not download your photo. Please check the bot configuration.",
@@ -180,12 +228,13 @@ export default function telegramBridge(pi: ExtensionAPI) {
 			},
 			// onVoice: download the voice note, transcribe it with the configured chain,
 			// and forward transcript + path. Providers: see src/stt.ts.
-			async (fileId: string, duration?: number) => {
+			async (fileId: string, duration?: number, quote?: QuotedMessage) => {
 				const timestamp = Date.now();
 				const destPath = path.join(photoDir, `voice_${timestamp}.ogg`);
+				const quoted = await quoteBlock(quote);
 				const result = await downloadFile(fileId, destPath);
 				if (!result) {
-					await forwardToAgent(pi, "🎙️ Voice received but could not be downloaded.");
+					await forwardToAgent(pi, `${quoted}🎙️ Voice received but could not be downloaded.`);
 					return;
 				}
 				const stt = await transcribe(result);
@@ -193,7 +242,7 @@ export default function telegramBridge(pi: ExtensionAPI) {
 				const body = stt.text
 					? `🎙️ Voice from Telegram (${seconds}s, transcript via ${stt.provider})\nTranscript: ${stt.text}\nPath: ${result}`
 					: `🎙️ Voice from Telegram (${seconds}s)\nPath: ${result}\n(no transcript: ${stt.error ?? "STT not configured"}. Transcribe the file yourself if you need the words.)`;
-				await forwardToAgent(pi, `${ORIGIN_PREFIX()} ${body}`);
+				await forwardToAgent(pi, `${ORIGIN_PREFIX()} ${quoted}${body}`);
 				await sendMsg(
 					stt.text
 						? `🎙️ Heard: _${stt.text.slice(0, 120)}_`
