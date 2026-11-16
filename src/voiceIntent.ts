@@ -29,7 +29,9 @@ export type VoiceMode = "off" | "phrases" | "auto";
  * How the backend speaks. `classify` is this repo's sidecar contract
  * (`POST {url}/classify` → `{voice: 0.97}`); `openai` is the standard
  * `/v1/chat/completions` shape, for a system-one model in the cloud or on the LAN
- * (llama.cpp, vLLM, LM Studio, a gateway with a prompt in front).
+ * (llama.cpp, vLLM, LM Studio, a gateway with a prompt in front); `decision` is the
+ * typed-decision contract of the OpenClaw Hybrid Edge Gateway
+ * (`POST {url}/v1/decision` → `{winner, confidence, tier, escalated}`).
  */
 export type VoiceProvider = "classify" | "openai";
 
@@ -73,6 +75,13 @@ const DEFAULT_PROMPT =
 	"Decidi se il messaggio chiede una risposta audio. Rispondi con una sola parola: " +
 	"VOICE se chiede un vocale o un audio, TEXT in ogni altro caso, incluse le frasi " +
 	"che nominano la voce senza chiederla (volume, timbro, 'la voce di X'). Nessuna spiegazione.";
+
+const DEFAULT_DECISION_INSTRUCTIONS =
+	"Decidi se l'utente chiede che la risposta gli arrivi come messaggio vocale o audio. " +
+	"Esempi di voice_answer: 'rispondi a voce', 'mandami un audio', 'leggimi la risposta', " +
+	"'dimmelo parlando'. Esempi di text_answer: 'scrivi in chat', 'la voce di X e' bella', " +
+	"'alza il volume', 'correggi il testo'. Se il messaggio non chiede esplicitamente un " +
+	"audio, scegli text_answer.";
 
 /**
  * Canonical phrases, kept deliberately short and channel-specific: "voce" alone
@@ -181,16 +190,18 @@ export function loadVoiceConfig(
 	const phrases = [...DEFAULT_PHRASES, ...store.extra, ...envPhrases].filter(
 		(p) => !disabled.has(normalizeText(p)),
 	);
+	const provider = parseProvider(env.PI_TELEGRAM_VOICE_PROVIDER);
 	return {
 		mode,
 		url,
-		provider: (env.PI_TELEGRAM_VOICE_PROVIDER ?? "classify").trim().toLowerCase() === "openai"
-			? "openai"
-			: "classify",
+		provider,
 		model: (env.PI_TELEGRAM_VOICE_MODEL ?? "default").trim() || "default",
 		key: (env.PI_TELEGRAM_VOICE_KEY ?? "").trim(),
 		path: (env.PI_TELEGRAM_VOICE_PATH ?? "/v1/chat/completions").trim(),
-		prompt: env.PI_TELEGRAM_VOICE_PROMPT ?? DEFAULT_PROMPT,
+		prompt: env.PI_TELEGRAM_VOICE_PROMPT ??
+			(provider === "decision" ? DEFAULT_DECISION_INSTRUCTIONS : DEFAULT_PROMPT),
+		labels: parseLabels(env.PI_TELEGRAM_VOICE_LABELS),
+		threshold: Number.parseFloat((env.PI_TELEGRAM_VOICE_THRESHOLD ?? "0").trim()) || 0,
 		high: numberOr(env.PI_TELEGRAM_VOICE_HIGH, 0.7),
 		low: numberOr(env.PI_TELEGRAM_VOICE_LOW, 0.3),
 		timeoutMs: numberOr(env.PI_TELEGRAM_VOICE_TIMEOUT_MS, 4000),
@@ -202,6 +213,18 @@ export function loadVoiceConfig(
 function numberOr(raw: string | undefined, fallback: number): number {
 	const n = Number.parseFloat((raw ?? "").trim());
 	return Number.isFinite(n) && n >= 0 && n <= 1 ? n : fallback;
+}
+
+function parseProvider(raw: string | undefined): VoiceProvider {
+	const value = (raw ?? "").trim().toLowerCase();
+	if (value === "openai" || value === "decision") return value;
+	return "classify";
+}
+
+/** First label means voice, second means text. */
+function parseLabels(raw: string | undefined): [string, string] {
+	const parts = (raw ?? "").split("|").map((p) => p.trim()).filter(Boolean);
+	return parts.length >= 2 ? [parts[0], parts[1]] : ["voice_answer", "text_answer"];
 }
 
 // ── Matching ────────────────────────────────────────────────────────
@@ -282,7 +305,13 @@ async function askBackend(
 		const headers: Record<string, string> = { "Content-Type": "application/json" };
 		if (cfg.key) headers.Authorization = `Bearer ${cfg.key}`;
 		const openai = cfg.provider === "openai";
-		const res = await fetchImpl(openai ? `${base}${cfg.path}` : `${base}/classify`, {
+		const decision = cfg.provider === "decision";
+		const endpoint = openai
+			? `${base}${cfg.path}`
+			: decision
+				? `${base}/v1/decision`
+				: `${base}/classify`;
+		const res = await fetchImpl(endpoint, {
 			method: "POST",
 			headers,
 			body: JSON.stringify(
@@ -297,7 +326,15 @@ async function askBackend(
 								{ role: "user", content: text },
 							],
 						}
-					: { text },
+					: decision
+						? {
+								text,
+								labels: cfg.labels,
+								instructions: cfg.prompt,
+								confidence_threshold: cfg.threshold,
+								category: "Voice Intent",
+							}
+						: { text },
 			),
 			signal: controller.signal,
 		});
@@ -305,8 +342,17 @@ async function askBackend(
 		const body = (await res.json()) as {
 			voice?: unknown;
 			score?: unknown;
+			winner?: unknown;
+			confidence?: unknown;
 			choices?: { message?: { content?: unknown } }[];
 		};
+		if (decision) {
+			const winner = typeof body.winner === "string" ? body.winner : "";
+			const confidence = typeof body.confidence === "number" ? body.confidence : 0;
+			if (winner === cfg.labels[0]) return { score: Math.min(1, Math.max(0, confidence)) };
+			if (winner === cfg.labels[1]) return { score: Math.min(1, Math.max(0, 1 - confidence)) };
+			return { error: `vincitore sconosciuto: ${winner || "nessuno"}` };
+		}
 		if (openai) {
 			const content = body.choices?.[0]?.message?.content;
 			const word = typeof content === "string" ? content.trim().toLowerCase() : "";

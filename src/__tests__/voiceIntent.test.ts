@@ -236,6 +236,62 @@ describe("provider openai (sistema uno in cloud o in LAN)", () => {
 	});
 });
 
+describe("provider decision (hybrid gateway /v1/decision)", () => {
+	function decisionCfg(threshold = "0") {
+		return loadVoiceConfig(
+			{
+				PI_TELEGRAM_VOICE_MODE: "auto",
+				PI_TELEGRAM_VOICE_URL: "http://192.168.50.222:8092",
+				PI_TELEGRAM_VOICE_PROVIDER: "decision",
+				PI_TELEGRAM_VOICE_THRESHOLD: threshold,
+				PI_TELEGRAM_STATE_DIR: createTempStore(),
+			} as NodeJS.ProcessEnv,
+			{ extra: [], disabled: [] },
+		);
+	}
+
+	function gateFetch(winner: string, confidence: number, capture?: { body?: any; url?: string }) {
+		return (async (url: string, init: any) => {
+			if (capture) {
+				capture.url = String(url);
+				capture.body = JSON.parse(String(init.body));
+			}
+			return new Response(JSON.stringify({ winner, confidence, tier: "System 1", escalated: false }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		}) as unknown as typeof fetch;
+	}
+
+	it("manda etichette, istruzioni e soglia a /v1/decision", async () => {
+		const capture: { body?: any; url?: string } = {};
+		const c = decisionCfg("0.95");
+		const d = await decideVoiceIntent("fammi un report", c, gateFetch("voice_answer", 0.998, capture));
+		expect(d).toMatchObject({ voice: true, source: "model" });
+		expect(capture.url).toBe("http://192.168.50.222:8092/v1/decision");
+		expect(capture.body.labels).toEqual(["voice_answer", "text_answer"]);
+		expect(capture.body.confidence_threshold).toBe(0.95);
+		expect(capture.body.category).toBe("Voice Intent");
+		expect(String(capture.body.instructions).toLowerCase()).toContain("vocale");
+	});
+
+	it("converte il vincitore in punteggio per le soglie del ponte", async () => {
+		const c = decisionCfg();
+		const voice = await decideVoiceIntent("x", c, gateFetch("voice_answer", 0.99));
+		const text = await decideVoiceIntent("x", c, gateFetch("text_answer", 0.99));
+		expect(voice.score).toBeCloseTo(0.99, 2);
+		expect(text.score).toBeCloseTo(0.01, 2);
+		expect(voice.voice).toBe(true);
+		expect(text.voice).toBe(false);
+	});
+
+	it("un vincitore sconosciuto non diventa voce", async () => {
+		const c = decisionCfg();
+		const d = await decideVoiceIntent("x", c, gateFetch("boh", 0.9));
+		expect(d).toMatchObject({ voice: false, source: "backend-error" });
+	});
+});
+
 describe("integrazione con il testo inoltrato", () => {
 	it("la direttiva compare solo quando serve", async () => {
 		const c = cfg();

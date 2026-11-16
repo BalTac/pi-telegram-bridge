@@ -139,10 +139,12 @@ PI_TELEGRAM_SYNC_MENU=0                 # 0 disables the slash-menu sync
 PI_TELEGRAM_ENV_FILE=/path/to/bridge.env # lets /deliver persist the mode
 PI_TELEGRAM_VOICE_MODE=off              # off | phrases | auto (see "Answering with a voice")
 PI_TELEGRAM_VOICE_URL=http://127.0.0.1:8197  # GLiClass sidecar, enables the model tiers
-PI_TELEGRAM_VOICE_PROVIDER=classify     # classify (this repo's sidecar) | openai
+PI_TELEGRAM_VOICE_PROVIDER=classify     # classify | openai | decision
 PI_TELEGRAM_VOICE_MODEL=gliclass-large  # model name, for the openai provider
 PI_TELEGRAM_VOICE_KEY=                  # bearer token, cloud or LAN gateway
 PI_TELEGRAM_VOICE_PATH=/v1/chat/completions  # path for the openai provider
+PI_TELEGRAM_VOICE_LABELS=voice_answer|text_answer  # decision provider, first means voice
+PI_TELEGRAM_VOICE_THRESHOLD=0           # decision provider: escalation threshold, 0 keeps System 1
 PI_TELEGRAM_VOICE_HIGH=0.7              # score >= high → voice (classify provider)
 PI_TELEGRAM_VOICE_LOW=0.3               # score <= low → text, in between → text
 PI_TELEGRAM_VOICE_PHRASES=              # extra phrases, pipe-separated
@@ -180,6 +182,21 @@ Any standard OpenAI endpoint works too: set `PI_TELEGRAM_VOICE_PROVIDER=openai` 
 single word — `VOICE` or `TEXT` — and reads the first token back. That is how a
 gateway that pairs a classifier with a bigger model (one system-1 decision, one
 system-2 escalation) plugs in without any code change.
+
+A third provider speaks the typed-decision shape of the OpenClaw Hybrid Edge Gateway
+(GLaiClass System 1 + a bigger System 2, `POST {url}/v1/decision`):
+
+```bash
+PI_TELEGRAM_VOICE_PROVIDER=decision
+PI_TELEGRAM_VOICE_URL=http://192.168.50.222:8092
+PI_TELEGRAM_VOICE_LABELS=voice_answer|text_answer   # first label means voice
+PI_TELEGRAM_VOICE_THRESHOLD=0                       # 0 = never escalate
+```
+
+Keep the threshold at 0 for this gate. An escalation costs 9-30 s, which is longer
+than the 4 s client timeout, so a message would be answered as text after the
+bridge gave up waiting; and on this task the escalated answers were no better than
+the fast ones (37/40 with System 1 only, 36/40 with the 0.95 threshold).
 
 Trade-off worth knowing: the `openai` provider returns one bit, not a calibrated
 score, so the `HIGH`/`LOW` band disappears — an answer counts as voice or text, and
