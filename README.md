@@ -139,12 +139,12 @@ PI_TELEGRAM_SYNC_MENU=0                 # 0 disables the slash-menu sync
 PI_TELEGRAM_ENV_FILE=/path/to/bridge.env # lets /deliver persist the mode
 PI_TELEGRAM_VOICE_MODE=off              # off | phrases | auto (see "Answering with a voice")
 PI_TELEGRAM_VOICE_URL=http://127.0.0.1:8197  # GLiClass sidecar, enables the model tiers
-PI_TELEGRAM_VOICE_PROVIDER=classify     # classify | openai | decision
-PI_TELEGRAM_VOICE_MODEL=gliclass-large  # model name, for the openai provider
-PI_TELEGRAM_VOICE_KEY=                  # bearer token, cloud or LAN gateway
-PI_TELEGRAM_VOICE_PATH=/v1/chat/completions  # path for the openai provider
-PI_TELEGRAM_VOICE_LABELS=voice_answer|text_answer  # decision provider, first means voice
-PI_TELEGRAM_VOICE_THRESHOLD=0           # decision provider: escalation threshold, 0 keeps System 1
+PI_TELEGRAM_VOICE_PROVIDER=classify     # classify (local sidecar) | systemone (standard endpoint)
+PI_TELEGRAM_VOICE_KEY=                  # bearer token, if the endpoint wants one
+PI_TELEGRAM_VOICE_LABELS=voice_answer|text_answer  # systemone: first label means voice
+PI_TELEGRAM_VOICE_CATEGORY=decision     # systemone: key inside `questions`
+PI_TELEGRAM_VOICE_THRESHOLD=0           # systemone: escalation threshold, 0 keeps System 1
+PI_TELEGRAM_VOICE_TIMEOUT_MS=           # default 4000, 8000 for systemone (worker wake-up)
 PI_TELEGRAM_VOICE_HIGH=0.7              # score >= high → voice (classify provider)
 PI_TELEGRAM_VOICE_LOW=0.3               # score <= low → text, in between → text
 PI_TELEGRAM_VOICE_PHRASES=              # extra phrases, pipe-separated
@@ -176,41 +176,43 @@ Tiers 2 and 3 are the same HTTP contract — `POST {url}/classify` → `{"voice"
 so switching model is a flag on the sidecar, not a change in the bridge
 (`voice-intent/server.py --model base|large`, see `voice-intent/README.md`).
 
-Any standard OpenAI endpoint works too: set `PI_TELEGRAM_VOICE_PROVIDER=openai` and point
-`PI_TELEGRAM_VOICE_URL` at it (cloud or LAN), with `PI_TELEGRAM_VOICE_MODEL` and
-`PI_TELEGRAM_VOICE_KEY`. The bridge sends a one-paragraph system prompt asking for a
-single word — `VOICE` or `TEXT` — and reads the first token back. That is how a
-gateway that pairs a classifier with a bigger model (one system-1 decision, one
-system-2 escalation) plugs in without any code change.
-
-A third provider speaks the typed-decision shape of the OpenClaw Hybrid Edge Gateway
-(GLaiClass System 1 + a bigger System 2, `POST {url}/v1/decision`):
+A configurable endpoint speaks the SystemOne wire format — the one shared by TypeSafe
+SystemOne, Julia-1 pipelines and the OpenClaw Hybrid Edge Gateway (a fast classifier as
+System 1, a bigger model as System 2). That is the standard for system-one decision
+models, so it is what the bridge adopts instead of inventing a chat prompt:
 
 ```bash
-PI_TELEGRAM_VOICE_PROVIDER=decision
+PI_TELEGRAM_VOICE_PROVIDER=systemone
 PI_TELEGRAM_VOICE_URL=http://192.168.50.222:8092
 PI_TELEGRAM_VOICE_LABELS=voice_answer|text_answer   # first label means voice
-PI_TELEGRAM_VOICE_THRESHOLD=0                       # 0 = never escalate
+PI_TELEGRAM_VOICE_CATEGORY=decision                 # key inside `questions`
 ```
 
-Keep the threshold at 0 for this gate. An escalation costs 9-30 s, which is longer
-than the 4 s client timeout, so a message would be answered as text after the
-bridge gave up waiting; and on this task the escalated answers were no better than
-the fast ones (37/40 with System 1 only, 36/40 with the 0.95 threshold).
+The bridge sends `{state, questions: {decision: {type: "choice", instructions, criteria}},
+confidence_threshold}` and reads `answers.decision.choice` plus `confidence`, mapping the
+voice label to `confidence` and the text label to `1 - confidence` so `HIGH`/`LOW` keep
+working. `PI_TELEGRAM_VOICE_CRITERIA` can override the two descriptions
+(`voce=...|testo=...`) and `PI_TELEGRAM_VOICE_INSTRUCTIONS` the question text.
 
-Trade-off worth knowing: the `openai` provider returns one bit, not a calibrated
-score, so the `HIGH`/`LOW` band disappears — an answer counts as voice or text, and
-the phrase list is still there as the guard. On the 40-sentence set the result is the
-same 37/40 with base and 40/40 with large; a model that answers well is enough, a
-model that hedges needs the `classify` provider to expose scores.
+Two settings matter with a gateway like that. `PI_TELEGRAM_VOICE_THRESHOLD=0` keeps the
+fast path only: an escalation costs 9-30 s, longer than any sane client timeout, and on
+this task the escalated answers were no better (37/40 with System 1 only, 36/40 with the
+0.95 threshold). And the timeout defaults to 8 s because a zero-idle-RAM gateway spends
+3-5 s waking its worker on the first request after idling — after that it answers in
+~270 ms.
 
-If the sidecar is missing, slow or down, the bridge degrades to tier 1 and keeps
+On a machine that runs the audio stack anyway, the local sidecar with
+`--model large` is the better choice: 40/40 on the same set, ~540 ms, no LAN hop, no
+cold start to explain.
+
+If the backend is missing, slow or down, the bridge degrades to tier 1 and keeps
 working; after three consecutive failures it stops calling it for a minute.
 
 Measured on 40 sentences (22 asking for audio in it/en/de/fr/es, 18 not), CPU:
-phrases only decides 21/40 with no mistakes; phrases + base reaches 92,5%; phrases +
-large reaches 40/40. The phrase list is what turns large's one error into a correct
-answer, which is why the cheap tier stays even when a model is available.
+phrases only decides 21/40 with no mistakes; phrases + GLiClass base reaches 92,5%;
+phrases + GLiClass large reaches 40/40; phrases + the pi5 gateway via systemone
+reaches 92,5% at ~220 ms. The phrase list is what turns large's one error into a
+correct answer, which is why the cheap tier stays even when a model is available.
 
 ## Voice notes: three ways to get a transcript
 

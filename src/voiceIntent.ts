@@ -26,14 +26,17 @@ import * as path from "node:path";
 export type VoiceMode = "off" | "phrases" | "auto";
 
 /**
- * How the backend speaks. `classify` is this repo's sidecar contract
- * (`POST {url}/classify` → `{voice: 0.97}`); `openai` is the standard
- * `/v1/chat/completions` shape, for a system-one model in the cloud or on the LAN
- * (llama.cpp, vLLM, LM Studio, a gateway with a prompt in front); `decision` is the
- * typed-decision contract of the OpenClaw Hybrid Edge Gateway
- * (`POST {url}/v1/decision` → `{winner, confidence, tier, escalated}`).
+ * How the backend speaks.
+ *
+ * `classify` is this repo's own sidecar (`POST {url}/classify` → `{voice: 0.97}`),
+ * used on the machine that also runs the audio stack.
+ *
+ * `systemone` is the SystemOne wire format — the one shared by TypeSafe SystemOne,
+ * Julia-1 pipelines and the OpenClaw Hybrid Edge Gateway: a state, a typed choice
+ * question with criteria, an optional confidence threshold. That is the standard for
+ * system-one decision models, so it is the one a configurable endpoint should speak.
  */
-export type VoiceProvider = "classify" | "openai";
+export type VoiceProvider = "classify" | "systemone";
 
 export interface VoiceConfig {
 	/** off: never tag. phrases: only the list. auto: list then sidecar (if configured). */
@@ -41,14 +44,18 @@ export interface VoiceConfig {
 	/** Sidecar base URL, e.g. http://127.0.0.1:8197. Empty string = no sidecar. */
 	url: string;
 	provider: VoiceProvider;
-	/** Model name for the openai provider. */
-	model: string;
 	/** Bearer token, when the endpoint wants one. */
 	key: string;
-	/** Path appended to url for the openai provider. */
-	path: string;
-	/** System prompt for the openai provider: must answer VOICE or TEXT. */
-	prompt: string;
+	/** Question key inside `questions` for the systemone provider. */
+	category: string;
+	/** Labels for the systemone provider, first one means "voice". */
+	labels: [string, string];
+	/** Criteria text per label: the wire format wants a description, not just a name. */
+	criteria: Record<string, string>;
+	/** Instructions for the systemone question. */
+	instructions: string;
+	/** confidence_threshold sent to the gateway; 0 keeps the fast path only. */
+	threshold: number;
 	/** Score at or above this means "voice". */
 	high: number;
 	/** Score at or below this means "text". Between low and high = unsure = text. */
@@ -71,17 +78,15 @@ export interface PhraseStore {
 const DEFAULT_DIRECTIVE =
 	"\n\n[voce] L'utente chiede la risposta come vocale: sintetizza e invia l'audio, non il testo.";
 
-const DEFAULT_PROMPT =
-	"Decidi se il messaggio chiede una risposta audio. Rispondi con una sola parola: " +
-	"VOICE se chiede un vocale o un audio, TEXT in ogni altro caso, incluse le frasi " +
-	"che nominano la voce senza chiederla (volume, timbro, 'la voce di X'). Nessuna spiegazione.";
+const DEFAULT_SYSTEMONE_INSTRUCTIONS =
+	"Decidi come consegnare la risposta: come messaggio vocale o come testo.";
 
-const DEFAULT_DECISION_INSTRUCTIONS =
-	"Decidi se l'utente chiede che la risposta gli arrivi come messaggio vocale o audio. " +
-	"Esempi di voice_answer: 'rispondi a voce', 'mandami un audio', 'leggimi la risposta', " +
-	"'dimmelo parlando'. Esempi di text_answer: 'scrivi in chat', 'la voce di X e' bella', " +
-	"'alza il volume', 'correggi il testo'. Se il messaggio non chiede esplicitamente un " +
-	"audio, scegli text_answer.";
+const DEFAULT_CRITERIA: Record<string, string> = {
+	voice_answer: "l'utente chiede che la risposta arrivi come vocale o audio, " +
+		"oppure chiede di parlargli invece di scrivergli",
+	text_answer: "l'utente vuole la risposta scritta, oppure nomina la voce senza chiederla " +
+		"(volume, timbro, 'la voce di X'), oppure parla d'altro",
+};
 
 /**
  * Canonical phrases, kept deliberately short and channel-specific: "voce" alone
@@ -191,20 +196,22 @@ export function loadVoiceConfig(
 		(p) => !disabled.has(normalizeText(p)),
 	);
 	const provider = parseProvider(env.PI_TELEGRAM_VOICE_PROVIDER);
+	const labels = parseLabels(env.PI_TELEGRAM_VOICE_LABELS);
 	return {
 		mode,
 		url,
 		provider,
-		model: (env.PI_TELEGRAM_VOICE_MODEL ?? "default").trim() || "default",
 		key: (env.PI_TELEGRAM_VOICE_KEY ?? "").trim(),
-		path: (env.PI_TELEGRAM_VOICE_PATH ?? "/v1/chat/completions").trim(),
-		prompt: env.PI_TELEGRAM_VOICE_PROMPT ??
-			(provider === "decision" ? DEFAULT_DECISION_INSTRUCTIONS : DEFAULT_PROMPT),
-		labels: parseLabels(env.PI_TELEGRAM_VOICE_LABELS),
+		category: (env.PI_TELEGRAM_VOICE_CATEGORY ?? "decision").trim() || "decision",
+		labels,
+		criteria: parseCriteria(env.PI_TELEGRAM_VOICE_CRITERIA, labels),
+		instructions: env.PI_TELEGRAM_VOICE_INSTRUCTIONS ?? DEFAULT_SYSTEMONE_INSTRUCTIONS,
 		threshold: Number.parseFloat((env.PI_TELEGRAM_VOICE_THRESHOLD ?? "0").trim()) || 0,
 		high: numberOr(env.PI_TELEGRAM_VOICE_HIGH, 0.7),
 		low: numberOr(env.PI_TELEGRAM_VOICE_LOW, 0.3),
-		timeoutMs: numberOr(env.PI_TELEGRAM_VOICE_TIMEOUT_MS, 4000),
+		// Un gateway zero-idle-RAM mette 3-5 s ad accendere il worker alla prima
+		// richiesta dopo l'inattività: 8 s copre il risveglio, poi risponde in ~270 ms.
+		timeoutMs: msOr(env.PI_TELEGRAM_VOICE_TIMEOUT_MS, provider === "systemone" ? 8000 : 4000),
 		phrases,
 		directive: env.PI_TELEGRAM_VOICE_DIRECTIVE ?? DEFAULT_DIRECTIVE,
 	};
@@ -215,16 +222,43 @@ function numberOr(raw: string | undefined, fallback: number): number {
 	return Number.isFinite(n) && n >= 0 && n <= 1 ? n : fallback;
 }
 
+/**
+ * Millisecondi. Separato da numberOr, che accetta solo punteggi 0..1: con la stessa
+ * funzione un timeout personalizzato veniva scartato in silenzio.
+ */
+function msOr(raw: string | undefined, fallback: number): number {
+	const n = Number.parseInt((raw ?? "").trim(), 10);
+	return Number.isFinite(n) && n >= 200 && n <= 120_000 ? n : fallback;
+}
+
 function parseProvider(raw: string | undefined): VoiceProvider {
-	const value = (raw ?? "").trim().toLowerCase();
-	if (value === "openai" || value === "decision") return value;
-	return "classify";
+	return (raw ?? "").trim().toLowerCase() === "systemone" ? "systemone" : "classify";
 }
 
 /** First label means voice, second means text. */
 function parseLabels(raw: string | undefined): [string, string] {
 	const parts = (raw ?? "").split("|").map((p) => p.trim()).filter(Boolean);
 	return parts.length >= 2 ? [parts[0], parts[1]] : ["voice_answer", "text_answer"];
+}
+
+/** `voce=descrizione|testo=descrizione`, altrimenti le descrizioni di default. */
+function parseCriteria(
+	raw: string | undefined,
+	labels: [string, string],
+): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const part of (raw ?? "").split("|")) {
+		const [name, ...rest] = part.split("=");
+		const key = (name ?? "").trim();
+		const value = rest.join("=").trim();
+		if (key && value) out[key] = value;
+	}
+	const fallback = (label: string, index: number) =>
+		DEFAULT_CRITERIA[label] ?? (index === 0 ? DEFAULT_CRITERIA.voice_answer : DEFAULT_CRITERIA.text_answer);
+	return {
+		[labels[0]]: out[labels[0]] ?? fallback(labels[0], 0),
+		[labels[1]]: out[labels[1]] ?? fallback(labels[1], 1),
+	};
 }
 
 // ── Matching ────────────────────────────────────────────────────────
@@ -304,37 +338,24 @@ async function askBackend(
 	try {
 		const headers: Record<string, string> = { "Content-Type": "application/json" };
 		if (cfg.key) headers.Authorization = `Bearer ${cfg.key}`;
-		const openai = cfg.provider === "openai";
-		const decision = cfg.provider === "decision";
-		const endpoint = openai
-			? `${base}${cfg.path}`
-			: decision
-				? `${base}/v1/decision`
-				: `${base}/classify`;
-		const res = await fetchImpl(endpoint, {
+		const systemone = cfg.provider === "systemone";
+		const res = await fetchImpl(systemone ? `${base}/v1/systemone` : `${base}/classify`, {
 			method: "POST",
 			headers,
 			body: JSON.stringify(
-				openai
+				systemone
 					? {
-							model: cfg.model,
-							temperature: 0,
-							max_tokens: 4,
-							stream: false,
-							messages: [
-								{ role: "system", content: cfg.prompt },
-								{ role: "user", content: text },
-							],
+							state: text,
+							questions: {
+								[cfg.category]: {
+									type: "choice",
+									instructions: cfg.instructions,
+									criteria: cfg.criteria,
+								},
+							},
+							confidence_threshold: cfg.threshold,
 						}
-					: decision
-						? {
-								text,
-								labels: cfg.labels,
-								instructions: cfg.prompt,
-								confidence_threshold: cfg.threshold,
-								category: "Voice Intent",
-							}
-						: { text },
+					: { text },
 			),
 			signal: controller.signal,
 		});
@@ -342,23 +363,15 @@ async function askBackend(
 		const body = (await res.json()) as {
 			voice?: unknown;
 			score?: unknown;
-			winner?: unknown;
-			confidence?: unknown;
-			choices?: { message?: { content?: unknown } }[];
+			answers?: Record<string, { choice?: unknown; confidence?: unknown }>;
 		};
-		if (decision) {
-			const winner = typeof body.winner === "string" ? body.winner : "";
-			const confidence = typeof body.confidence === "number" ? body.confidence : 0;
-			if (winner === cfg.labels[0]) return { score: Math.min(1, Math.max(0, confidence)) };
-			if (winner === cfg.labels[1]) return { score: Math.min(1, Math.max(0, 1 - confidence)) };
-			return { error: `vincitore sconosciuto: ${winner || "nessuno"}` };
-		}
-		if (openai) {
-			const content = body.choices?.[0]?.message?.content;
-			const word = typeof content === "string" ? content.trim().toLowerCase() : "";
-			if (/^voice\b/.test(word)) return { score: 1 };
-			if (/^text\b/.test(word)) return { score: 0 };
-			return { error: `risposta non riconosciuta: ${word.slice(0, 20) || "vuota"}` };
+		if (systemone) {
+			const answer = body.answers?.[cfg.category] ?? Object.values(body.answers ?? {})[0];
+			const choice = typeof answer?.choice === "string" ? answer.choice : "";
+			const confidence = typeof answer?.confidence === "number" ? answer.confidence : 0;
+			if (choice === cfg.labels[0]) return { score: Math.min(1, Math.max(0, confidence)) };
+			if (choice === cfg.labels[1]) return { score: Math.min(1, Math.max(0, 1 - confidence)) };
+			return { error: `scelta sconosciuta: ${choice || "nessuna"}` };
 		}
 		const raw = typeof body.voice === "number" ? body.voice : body.score;
 		if (typeof raw !== "number" || !Number.isFinite(raw)) return { error: "no score" };

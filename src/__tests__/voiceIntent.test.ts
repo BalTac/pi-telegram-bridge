@@ -118,6 +118,26 @@ describe("config", () => {
 		expect(c.phrases).not.toContain("rispondi a voce");
 	});
 
+	it("timeout: 8 s per systemone (risveglio), 4 s per il sidecar, e si può forzare", () => {
+		const dir = createTempStore();
+		const opts = { extra: [], disabled: [] } as const;
+		const sy = loadVoiceConfig(
+			{ PI_TELEGRAM_VOICE_MODE: "auto", PI_TELEGRAM_VOICE_URL: "http://x", PI_TELEGRAM_VOICE_PROVIDER: "systemone", PI_TELEGRAM_STATE_DIR: dir } as NodeJS.ProcessEnv,
+			opts,
+		);
+		expect(sy.timeoutMs).toBe(8000);
+		const side = loadVoiceConfig(
+			{ PI_TELEGRAM_VOICE_MODE: "auto", PI_TELEGRAM_VOICE_URL: "http://x", PI_TELEGRAM_STATE_DIR: dir } as NodeJS.ProcessEnv,
+			opts,
+		);
+		expect(side.timeoutMs).toBe(4000);
+		const forced = loadVoiceConfig(
+			{ PI_TELEGRAM_VOICE_MODE: "auto", PI_TELEGRAM_VOICE_URL: "http://x", PI_TELEGRAM_VOICE_TIMEOUT_MS: "15000", PI_TELEGRAM_STATE_DIR: dir } as NodeJS.ProcessEnv,
+			opts,
+		);
+		expect(forced.timeoutMs).toBe(15000);
+	});
+
 	it("soglie fuori range tornano ai default", () => {
 		const c = cfg({ PI_TELEGRAM_VOICE_HIGH: "7", PI_TELEGRAM_VOICE_LOW: "x" });
 		expect(c.high).toBe(0.7);
@@ -174,75 +194,13 @@ describe("decideVoiceIntent", () => {
 	});
 });
 
-describe("provider openai (sistema uno in cloud o in LAN)", () => {
-	function chatFetch(answer: string, capture?: { url?: string; body?: any; auth?: string }) {
-		return (async (url: string, init: any) => {
-			if (capture) {
-				capture.url = String(url);
-				capture.body = JSON.parse(String(init.body));
-				capture.auth = init.headers?.Authorization;
-			}
-			return new Response(
-				JSON.stringify({ choices: [{ message: { role: "assistant", content: answer } }] }),
-				{ status: 200, headers: { "content-type": "application/json" } },
-			);
-		}) as unknown as typeof fetch;
-	}
-
-	const openaiCfg = () =>
-		loadVoiceConfig(
-			{
-				PI_TELEGRAM_VOICE_MODE: "auto",
-				PI_TELEGRAM_VOICE_URL: "http://192.168.50.180:8092",
-				PI_TELEGRAM_VOICE_PROVIDER: "openai",
-				PI_TELEGRAM_VOICE_MODEL: "gliclass-base",
-				PI_TELEGRAM_VOICE_KEY: "k-123",
-				PI_TELEGRAM_STATE_DIR: createTempStore(),
-			} as NodeJS.ProcessEnv,
-			{ extra: [], disabled: [] },
-		);
-
-	it("chiama /v1/chat/completions con il prompt e la chiave", async () => {
-		const capture: { url?: string; body?: any; auth?: string } = {};
-		const c = openaiCfg();
-		const d = await decideVoiceIntent("fammi un riassunto", c, chatFetch("VOICE", capture));
-		expect(d).toMatchObject({ voice: true, source: "model", score: 1 });
-		expect(capture.url).toBe("http://192.168.50.180:8092/v1/chat/completions");
-		expect(capture.body.model).toBe("gliclass-base");
-		expect(capture.body.temperature).toBe(0);
-		expect(capture.body.messages[0].content).toContain("VOICE");
-		expect(capture.body.messages[1].content).toBe("fammi un riassunto");
-		expect(capture.auth).toBe("Bearer k-123");
-	});
-
-	it("TEXT è testo, e la risposta sporca non decide", async () => {
-		const c = openaiCfg();
-		expect((await decideVoiceIntent("x", c, chatFetch("text"))).voice).toBe(false);
-		expect((await decideVoiceIntent("x", c, chatFetch("  VOICE"))).voice).toBe(true);
-		const odd = await decideVoiceIntent("x", c, chatFetch("boh"));
-		expect(odd).toMatchObject({ voice: false, source: "backend-error" });
-	});
-
-	it("il lessico decide prima di chiamare il gateway", async () => {
-		const c = openaiCfg();
-		let called = false;
-		const spy = (async () => {
-			called = true;
-			return new Response("{}", { status: 200 });
-		}) as unknown as typeof fetch;
-		const d = await decideVoiceIntent("rispondi con un vocale", c, spy);
-		expect(d.source).toBe("phrase");
-		expect(called).toBe(false);
-	});
-});
-
-describe("provider decision (hybrid gateway /v1/decision)", () => {
-	function decisionCfg(threshold = "0") {
+describe("provider systemone (standard dei modelli system-one)", () => {
+	function systemoneCfg(threshold = "0") {
 		return loadVoiceConfig(
 			{
 				PI_TELEGRAM_VOICE_MODE: "auto",
 				PI_TELEGRAM_VOICE_URL: "http://192.168.50.222:8092",
-				PI_TELEGRAM_VOICE_PROVIDER: "decision",
+				PI_TELEGRAM_VOICE_PROVIDER: "systemone",
 				PI_TELEGRAM_VOICE_THRESHOLD: threshold,
 				PI_TELEGRAM_STATE_DIR: createTempStore(),
 			} as NodeJS.ProcessEnv,
@@ -250,33 +208,56 @@ describe("provider decision (hybrid gateway /v1/decision)", () => {
 		);
 	}
 
-	function gateFetch(winner: string, confidence: number, capture?: { body?: any; url?: string }) {
+	function gateFetch(
+		choice: string,
+		confidence: number,
+		capture?: { body?: any; url?: string; auth?: string },
+	) {
 		return (async (url: string, init: any) => {
 			if (capture) {
 				capture.url = String(url);
 				capture.body = JSON.parse(String(init.body));
+				capture.auth = init.headers?.Authorization;
 			}
-			return new Response(JSON.stringify({ winner, confidence, tier: "System 1", escalated: false }), {
-				status: 200,
-				headers: { "content-type": "application/json" },
-			});
+			return new Response(
+				JSON.stringify({
+					answers: { decision: { choice, confidence, probabilities: {} } },
+					tier: "System 1",
+					escalated: false,
+					latency_ms: 150,
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			);
 		}) as unknown as typeof fetch;
 	}
 
-	it("manda etichette, istruzioni e soglia a /v1/decision", async () => {
-		const capture: { body?: any; url?: string } = {};
-		const c = decisionCfg("0.95");
+	it("parla il formato state + questions.decision + criteria", async () => {
+		const capture: { body?: any; url?: string; auth?: string } = {};
+		const c = loadVoiceConfig(
+			{
+				PI_TELEGRAM_VOICE_MODE: "auto",
+				PI_TELEGRAM_VOICE_URL: "http://192.168.50.222:8092",
+				PI_TELEGRAM_VOICE_PROVIDER: "systemone",
+				PI_TELEGRAM_VOICE_KEY: "k-9",
+				PI_TELEGRAM_STATE_DIR: createTempStore(),
+			} as NodeJS.ProcessEnv,
+			{ extra: [], disabled: [] },
+		);
 		const d = await decideVoiceIntent("fammi un report", c, gateFetch("voice_answer", 0.998, capture));
 		expect(d).toMatchObject({ voice: true, source: "model" });
-		expect(capture.url).toBe("http://192.168.50.222:8092/v1/decision");
-		expect(capture.body.labels).toEqual(["voice_answer", "text_answer"]);
-		expect(capture.body.confidence_threshold).toBe(0.95);
-		expect(capture.body.category).toBe("Voice Intent");
-		expect(String(capture.body.instructions).toLowerCase()).toContain("vocale");
+		expect(capture.url).toBe("http://192.168.50.222:8092/v1/systemone");
+		expect(capture.auth).toBe("Bearer k-9");
+		expect(capture.body.state).toBe("fammi un report");
+		expect(capture.body.confidence_threshold).toBe(0);
+		const q = capture.body.questions.decision;
+		expect(q.type).toBe("choice");
+		expect(Object.keys(q.criteria)).toEqual(["voice_answer", "text_answer"]);
+		expect(q.criteria.voice_answer.length).toBeGreaterThan(10);
+		expect(q.instructions.length).toBeGreaterThan(10);
 	});
 
-	it("converte il vincitore in punteggio per le soglie del ponte", async () => {
-		const c = decisionCfg();
+	it("rimappa choice+confidence sulle soglie del ponte", async () => {
+		const c = systemoneCfg();
 		const voice = await decideVoiceIntent("x", c, gateFetch("voice_answer", 0.99));
 		const text = await decideVoiceIntent("x", c, gateFetch("text_answer", 0.99));
 		expect(voice.score).toBeCloseTo(0.99, 2);
@@ -285,10 +266,22 @@ describe("provider decision (hybrid gateway /v1/decision)", () => {
 		expect(text.voice).toBe(false);
 	});
 
-	it("un vincitore sconosciuto non diventa voce", async () => {
-		const c = decisionCfg();
+	it("una scelta sconosciuta non diventa voce", async () => {
+		const c = systemoneCfg();
 		const d = await decideVoiceIntent("x", c, gateFetch("boh", 0.9));
 		expect(d).toMatchObject({ voice: false, source: "backend-error" });
+	});
+
+	it("il lessico decide prima di chiamare il gateway", async () => {
+		const c = systemoneCfg();
+		let called = false;
+		const spy = (async () => {
+			called = true;
+			return new Response("{}", { status: 200 });
+		}) as unknown as typeof fetch;
+		const d = await decideVoiceIntent("rispondi con un vocale", c, spy);
+		expect(d.source).toBe("phrase");
+		expect(called).toBe(false);
 	});
 });
 
