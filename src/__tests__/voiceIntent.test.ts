@@ -15,6 +15,7 @@ import {
 	resetVoiceIntentState,
 	savePhraseStore,
 	voiceDirective,
+	personaVoiceLine,
 } from "../voiceIntent";
 
 function createTempStore(): string {
@@ -316,5 +317,33 @@ describe("store", () => {
 		expect(loadPhraseStore(file)).toEqual({ extra: [], disabled: [] });
 		fs.writeFileSync(file, "{ non json", "utf8");
 		expect(loadPhraseStore(file).extra).toEqual([]);
+	});
+});
+
+describe("personaVoiceLine", () => {
+	it("legge voce e motore dal file della rotazione", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "persona-"));
+		const file = path.join(dir, "current.json");
+		fs.writeFileSync(file, JSON.stringify({ name: "Gaia", voice: "gaia-nanni", engine: "xtts" }));
+		const line = personaVoiceLine(file);
+		expect(line).toContain("gaia-nanni");
+		expect(line).toContain("Gaia");
+		fs.rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("non inventa niente se il file manca", () => {
+		expect(personaVoiceLine("/tmp/non-esiste-persona.json")).toBe("");
+	});
+
+	it("aggiunge la voce del personaggio solo quando la risposta e' vocale", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "persona-"));
+		const file = path.join(dir, "current.json");
+		fs.writeFileSync(file, JSON.stringify({ name: "Danny", voice: "dan-sarcastico" }));
+		process.env.PI_TELEGRAM_PERSONA_FILE = file;
+		const cfg = { directive: " [voce] parla" } as unknown as Parameters<typeof voiceDirective>[0];
+		expect(voiceDirective(cfg, { voice: true, source: "phrase" })).toContain("dan-sarcastico");
+		expect(voiceDirective(cfg, { voice: false, source: "phrase" })).toBe("");
+		delete process.env.PI_TELEGRAM_PERSONA_FILE;
+		fs.rmSync(dir, { recursive: true, force: true });
 	});
 });

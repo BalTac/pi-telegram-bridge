@@ -416,8 +416,38 @@ export async function decideVoiceIntent(
 
 /** Text to append to a forwarded message. Empty when no voice was requested. */
 export function voiceDirective(cfg: VoiceConfig, decision: VoiceDecision): string {
-	return decision.voice ? cfg.directive : "";
+	return decision.voice ? cfg.directive + personaVoiceLine() : "";
 }
+
+/**
+ * Voice of the persona on stage, read from the rotation's state file.
+ *
+ * The rotation script writes `{name, voice, engine}` when it opens a session; the
+ * gate appends the voice to the directive so the persona change survives a session
+ * restart without touching the prompt. Cached by mtime: one stat per message.
+ */
+export function personaVoiceLine(file = process.env.PI_TELEGRAM_PERSONA_FILE ??
+	"D:/openclaw/state/personas/current.json"): string {
+	try {
+		const stat = fs.statSync(file);
+		if (personaCache && personaCache.mtime === stat.mtimeMs) return personaCache.text;
+		const data = JSON.parse(fs.readFileSync(file, "utf-8")) as {
+			name?: string;
+			voice?: string;
+			engine?: string;
+		};
+		if (!data.voice) return "";
+		const engine = data.engine ? `, motore ${data.engine}` : "";
+		const who = data.name ? ` (personaggio: ${data.name})` : "";
+		const text = ` Voce da usare: ${data.voice}${engine}${who}.`;
+		personaCache = { mtime: stat.mtimeMs, text };
+		return text;
+	} catch {
+		return "";
+	}
+}
+
+let personaCache: { mtime: number; text: string } | null = null;
 
 /** One line for status output and for logs. */
 export function describeDecision(decision: VoiceDecision): string {
