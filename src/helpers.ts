@@ -175,6 +175,47 @@ export async function sendPhoto(
 	return data.result.message_id;
 }
 
+/**
+ * Send any file as a Telegram document. Local paths only: the point is shipping a
+ * file that is already on disk (plans, logs, reports), not proxying the web.
+ * Bot API caps documents at 50 MB — say so instead of failing with a 413.
+ */
+export async function sendFile(filePath: string, caption?: string): Promise<number> {
+	const fs = await import("node:fs/promises");
+	const path = await import("node:path");
+	const stat = await fs.stat(filePath).catch(() => null);
+	if (!stat || !stat.isFile()) throw new Error(`not a file: ${filePath}`);
+	if (stat.size > 50 * 1024 * 1024) {
+		throw new Error(`file too large for Telegram (${Math.round(stat.size / 1048576)} MB, max 50)`);
+	}
+
+	const formData = new FormData();
+	formData.set("chat_id", getChatId());
+	formData.set(
+		"document",
+		new Blob([await fs.readFile(filePath)] as any),
+		path.basename(filePath),
+	);
+	if (caption) {
+		formData.set("caption", caption);
+		formData.set("parse_mode", "HTML");
+	}
+
+	const token = getToken();
+	const res = await fetch(`${BASE_URL}${token}/sendDocument`, { method: "POST", body: formData });
+	if (!res.ok) {
+		const errText = await res.text();
+		// Un parse_mode sbagliato non deve impedire la consegna del file.
+		if (caption && res.status === 400 && (errText.includes("parse") || errText.includes("entity"))) {
+			return sendFile(filePath);
+		}
+		throw new Error(`sendFile failed: ${res.status} ${errText}`);
+	}
+
+	const data = (await res.json()) as { ok: boolean; result: { message_id: number } };
+	return data.result.message_id;
+}
+
 // ── Polling ─────────────────────────────────────────────────────────
 
 export async function pollReply(

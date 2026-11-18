@@ -14,6 +14,7 @@ import {
 	telegramApi,
 	sendMsg,
 	sendPhoto,
+	sendFile,
 	getFileUrl,
 	downloadFile,
 	pollReply,
@@ -32,6 +33,7 @@ import {
 	overrideSchema,
 	notifySchema,
 	sendPhotoSchema,
+	sendFileSchema,
 	voiceTriggerSchema,
 } from "./tools/telegram";
 import { commandMenu, handleCommand, isPossibleCommand } from "./commands";
@@ -678,6 +680,35 @@ export default function telegramBridge(pi: ExtensionAPI) {
 						{
 							type: "text",
 							text: `Failed to send photo: ${e instanceof Error ? e.message : e}`,
+						},
+					],
+					details: {},
+					isError: true,
+				};
+			}
+		},
+	});
+
+	// telegram_send_file
+	pi.registerTool({
+		name: "telegram_send_file",
+		label: "Send File",
+		description:
+			"Send a local file to the Telegram chat as a document (plans, logs, reports). Max 50 MB.",
+		parameters: sendFileSchema,
+		async execute(_id: string, params: { path: string; caption?: string }) {
+			try {
+				const mid = await sendFile(params.path, params.caption);
+				return {
+					content: [{ type: "text", text: `File sent (id:${mid})` }],
+					details: { messageId: mid },
+				};
+			} catch (e: unknown) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Failed to send file: ${e instanceof Error ? e.message : e}`,
 						},
 					],
 					details: {},

@@ -204,6 +204,11 @@ export const sendPhotoSchema = Type.Object({
 	caption: Type.Optional(Type.String({ description: "Optional caption text (HTML formatting supported)" })),
 });
 
+export const sendFileSchema = Type.Object({
+	path: Type.String({ description: "Local file path to send as a document (max 50 MB)" }),
+	caption: Type.Optional(Type.String({ description: "Optional caption text (HTML formatting supported)" })),
+});
+
 export const listenSchema = Type.Object({});
 
 export const sendSchema = Type.Object({ message: Type.String() });

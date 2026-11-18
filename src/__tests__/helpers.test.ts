@@ -1,3 +1,4 @@
+import { sendFile } from "../helpers";
 /**
  * pi-telegram-bridge — Helpers Tests
  */
@@ -811,4 +812,10 @@ describe("pollUpdates", () => {
 
     expect(onMessage).not.toHaveBeenCalled();
   }, 15000);
+});
+
+describe("sendFile", () => {
+	it("rifiuta un percorso che non e' un file, senza toccare la rete", async () => {
+		await expect(sendFile("/tmp/does-not-exist-xyz.md")).rejects.toThrow(/not a file/);
+	});
 });

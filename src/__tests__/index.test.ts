@@ -108,12 +108,13 @@ describe("extension registration", () => {
 		const pi = createMockPI();
 		telegramBridge(pi as any);
 
-		expect(pi.registerTool).toHaveBeenCalledTimes(8);
+		expect(pi.registerTool).toHaveBeenCalledTimes(9);
 		expect(pi._getTool("telegram_listen")).toBeDefined();
 		expect(pi._getTool("telegram_send")).toBeDefined();
 		expect(pi._getTool("telegram_ask")).toBeDefined();
 		expect(pi._getTool("telegram_override")).toBeDefined();
 		expect(pi._getTool("telegram_status")).toBeDefined();
+  expect(pi._getTool("telegram_send_file")).toBeDefined();
 		expect(pi._getTool("voice_trigger")).toBeDefined();
 		expect(pi._getTool("telegram_notify")).toBeDefined();
 		expect(pi._getTool("telegram_send_photo")).toBeDefined();
