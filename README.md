@@ -214,6 +214,36 @@ phrases + GLiClass large reaches 40/40; phrases + the pi5 gateway via systemone
 reaches 92,5% at ~220 ms. The phrase list is what turns large's one error into a
 correct answer, which is why the cheap tier stays even when a model is available.
 
+## Quoting a message
+
+If the human replies with Telegram's quote feature, the bridge resolves the quoted
+message and prepends it to what it forwards — otherwise the agent reads the answer
+and knows nothing about what it answers to.
+
+```
+↩️ In risposta a Dave (msg 1234):
+il preventivo di marzo era 1800
+
+———
+🎙️ Voice from Telegram (17s, transcript via http)
+Transcript: ok, e questo sconto?
+Path: /tmp/telegram-photos/voice_....ogg
+[voce] L'utente chiede la risposta come vocale: sintetizza e invia l'audio, non il testo.
+```
+
+| quoted kind | what arrives |
+|---|---|
+| text | the text, truncated at 2000 characters |
+| photo | downloaded to the temp folder + caption + path |
+| voice / audio / video note | downloaded, transcribed with the STT chain, path |
+| video / document | downloaded with the original extension |
+| other | the kind name, no download |
+
+`extractQuote()` in `src/helpers.ts` is pure (no network, no disk) and is passed to
+the callbacks only when a quote exists, so callers without quotes are unchanged. The
+voice gate looks at the **new** message text only: quoting a voice note does not turn
+the answer into audio.
+
 ## Voice notes: three ways to get a transcript
 
 A Telegram voice note is OGG/Opus. The bridge downloads it to the temp directory and then walks

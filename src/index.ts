@@ -239,8 +239,11 @@ export default function telegramBridge(pi: ExtensionAPI) {
 				}
 				const stt = await transcribe(result);
 				const seconds = duration ?? "?";
+				// Il gate voce vale anche qui: una vocale che dice "rispondimi a voce" deve
+				// portarsi dietro la direttiva, altrimenti la richiesta resta implicita.
+				const intent = stt.text ? await voiceSuffix(stt.text) : "";
 				const body = stt.text
-					? `🎙️ Voice from Telegram (${seconds}s, transcript via ${stt.provider})\nTranscript: ${stt.text}\nPath: ${result}`
+					? `🎙️ Voice from Telegram (${seconds}s, transcript via ${stt.provider})\nTranscript: ${stt.text}\nPath: ${result}${intent}`
 					: `🎙️ Voice from Telegram (${seconds}s)\nPath: ${result}\n(no transcript: ${stt.error ?? "STT not configured"}. Transcribe the file yourself if you need the words.)`;
 				await forwardToAgent(pi, `${ORIGIN_PREFIX()} ${quoted}${body}`);
 				await sendMsg(
