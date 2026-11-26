@@ -35,6 +35,27 @@ export async function telegramApi(
 	return res.json();
 }
 
+// ── Formattazione ───────────────────────────────────────────────────
+
+const TAG_RE =
+	/<\/?(?:b|strong|i|em|u|ins|s|strike|del|code|pre|a|blockquote|tg-spoiler|span)\b[^>]*>/i;
+
+/** Il testo usa tag che Telegram conosce? Se sì, va mandato con parse_mode HTML. */
+export function looksLikeHtml(text: string): boolean {
+	return TAG_RE.test(text);
+}
+
+/**
+ * Lascia i tag veri e trasforma in entità i `<` e le `&` che non lo sono: così un
+ * messaggio con dentro "a < b" non fa fallire la consegna, e i tag renderizzati
+ * non finiscono a schermo come testo.
+ */
+export function sanitizeHtml(text: string): string {
+	return text
+		.replace(/&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)/g, "&amp;")
+		.replace(/<(?![a-zA-Z/!])/g, "&lt;");
+}
+
 // ── Messaging ───────────────────────────────────────────────────────
 
 export async function sendMsg(
@@ -42,11 +63,15 @@ export async function sendMsg(
 	replyMarkup?: object,
 	parseMode: "Markdown" | "HTML" | undefined = undefined,
 ): Promise<number> {
+	// Interprete flessibile: se il testo contiene tag HTML e nessuno ha chiesto un
+	// parse_mode esplicito, si manda in HTML. Se Telegram lo rifiuta, si riprova
+	// in testo puro senza perdere il messaggio.
+	const mode = parseMode ?? (looksLikeHtml(text) ? "HTML" : undefined);
 	const body: Record<string, unknown> = {
 		chat_id: getChatId(),
-		text,
-		parse_mode: parseMode,
+		text: mode === "HTML" ? sanitizeHtml(text) : text,
 	};
+	if (mode) body.parse_mode = mode;
 	if (replyMarkup) body.reply_markup = JSON.stringify(replyMarkup);
 	try {
 		const r = (await telegramApi("sendMessage", body)) as {
@@ -55,10 +80,11 @@ export async function sendMsg(
 		};
 		return r.result.message_id;
 	} catch (e: unknown) {
-		// Retry without parse_mode if formatting caused a 400 parse error
+		// Retry senza parse_mode se la formattazione ha causato un 400
 		const msg = e instanceof Error ? e.message : String(e);
-		if (parseMode && msg.includes("400") && (msg.includes("parse") || msg.includes("entity"))) {
+		if (mode && msg.includes("400") && (msg.includes("parse") || msg.includes("entity"))) {
 			delete body.parse_mode;
+			body.text = text;
 			const r2 = (await telegramApi("sendMessage", body)) as {
 				ok: boolean;
 				result: { message_id: number };

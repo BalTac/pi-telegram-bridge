@@ -3,6 +3,14 @@
 All notable changes to this fork of `@bytesbrains/pi-telegram-bridge`. The fork starts from upstream
 1.4.1, whose history is not available (the original repository is unreachable).
 
+## Unreleased — formatting that arrives readable
+
+- `sendMsg()` used to pass `parse_mode: undefined`, so any `<b>`, `<i>`, `<code>` the agent wrote
+  reached the chat as literal characters. The bridge now looks at the text: if it contains tags
+  Telegram understands, it sends with `parse_mode: HTML` and escapes the stray `<` and `&` that
+  are not tags; if Telegram still refuses, it retries as plain text instead of losing the message.
+  Verified against the Bot API: `entities: [bold, code]`; a body containing `5 < 6` goes out plain.
+
 ## Unreleased — philosophy
 
 - README gained a *Philosophy* section: one session, readable beats complete, no roadmap, honest
