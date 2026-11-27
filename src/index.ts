@@ -25,6 +25,7 @@ import {
 import type { QuotedMessage } from "./helpers";
 import * as path from "node:path";
 import * as os from "node:os";
+import * as fs from "node:fs";
 import {
 	listenSchema,
 	sendSchema,
@@ -58,6 +59,21 @@ export default function telegramBridge(pi: ExtensionAPI) {
 	let botId: number | null = null;
 	let listenerAbort: AbortController | null = null;
 	let lastUpdateId = 0;
+
+	// Segnale di avvio: dice quale codice è vivo. Senza, l'unico modo per sapere se
+	// una patch è entrata è indovinare — successo il 27/11: processo delle 04:20,
+	// correzione delle 05:15, e i tag continuavano ad arrivare a schermo.
+	try {
+		const logDir = path.join(process.cwd(), "state", "logs");
+		fs.mkdirSync(logDir, { recursive: true });
+		fs.appendFileSync(
+			path.join(logDir, "bridge.log"),
+			`[${new Date().toISOString()}] avvio · formattazione automatica · tool senza parse_mode
+`,
+		);
+	} catch {
+		// un segnale di avvio non deve mai impedire al ponte di partire
+	}
 
 	/**
 	 * Voice gate (tiers: phrases → gliclass base/large sidecar). Returns the text to
