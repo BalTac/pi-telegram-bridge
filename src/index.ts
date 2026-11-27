@@ -433,8 +433,10 @@ export default function telegramBridge(pi: ExtensionAPI) {
 		parameters: sendSchema,
 		async execute(_id: string, params: { message: string }) {
 			try {
-				// local patch: native Telegram Markdown parse for chat replies
-				const mid = await sendMsg(params.message, undefined, "Markdown");
+				// Interprete flessibile: sendMsg decide da sé (HTML se ci sono tag,
+				// altrimenti testo puro). Forzare "Markdown" qui faceva arrivare i
+				// tag HTML a schermo come caratteri.
+				const mid = await sendMsg(params.message);
 				return {
 					content: [{ type: "text", text: `Sent (id:${mid})` }],
 					details: {},
