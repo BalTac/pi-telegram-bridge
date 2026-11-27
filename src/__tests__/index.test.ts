@@ -254,8 +254,9 @@ describe("telegram_send tool", () => {
 		const tool = pi._getTool("telegram_send");
 		const result = await tool.execute("id-1", { message: "Test message" });
 
-		// fork: the send tool asks Telegram to parse Markdown
-expect(mockSendMsg).toHaveBeenCalledWith("Test message", undefined, "Markdown");
+		// the tool leaves the formatting decision to sendMsg: HTML when the text
+		// carries tags Telegram understands, plain text otherwise
+		expect(mockSendMsg).toHaveBeenCalledWith("Test message");
 		expect(result.content[0].text).toContain("Sent");
 		expect(result.isError).toBeFalsy();
 	});

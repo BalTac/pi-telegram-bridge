@@ -819,3 +819,36 @@ describe("sendFile", () => {
 		await expect(sendFile("/tmp/does-not-exist-xyz.md")).rejects.toThrow(/not a file/);
 	});
 });
+
+// ── formatting: the parse mode is decided from the text ───────────
+
+describe("looksLikeHtml", () => {
+  it("recognises the tags Telegram understands", () => {
+    expect(helpers.looksLikeHtml("<b>grassetto</b>")).toBe(true);
+    expect(helpers.looksLikeHtml("<code>mem_123</code>")).toBe(true);
+    expect(helpers.looksLikeHtml('<a href="https://example.com">link</a>')).toBe(true);
+  });
+
+  it("leaves plain prose alone", () => {
+    expect(helpers.looksLikeHtml("nessun tag, solo prosa")).toBe(false);
+    expect(helpers.looksLikeHtml("se a < b e c > d")).toBe(false);
+    expect(helpers.looksLikeHtml("**markdown** non è HTML")).toBe(false);
+  });
+});
+
+describe("sanitizeHtml", () => {
+  it("keeps real tags", () => {
+    expect(helpers.sanitizeHtml("<b>testo</b>")).toBe("<b>testo</b>");
+  });
+
+  it("escapes a lone less-than so the message cannot fail to parse", () => {
+    expect(helpers.sanitizeHtml("<b>rotto</b> ma con < dentro")).toBe(
+      "<b>rotto</b> ma con &lt; dentro",
+    );
+  });
+
+  it("escapes a bare ampersand but not an existing entity", () => {
+    expect(helpers.sanitizeHtml("a & b")).toBe("a &amp; b");
+    expect(helpers.sanitizeHtml("a &amp; b")).toBe("a &amp; b");
+  });
+});
